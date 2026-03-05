@@ -1,206 +1,330 @@
-'use client';
+"use client";
 import { useState } from 'react';
+import Image from 'next/image';
+import { supabase } from '@/lib/supabase';
 
-export default function SimuladorTonFiel() {
-  const [etapa, setEtapa] = useState<'input' | 'resultado'>('input');
-  const [modo, setModo] = useState<'cobrar' | 'receber'>('receber');
-  const [valor, setValor] = useState<string>('100,00');
-  const [formaPagamento, setFormaPagamento] = useState<'Crédito' | 'Débito'>('Crédito');
-  const [bandeira, setBandeira] = useState('Visa');
+type Modalidade = 'debito' | 'credito' | 'parcelado';
+type TipoOperacao = 'cobrar' | 'receber';
+
+const TAXAS = {
+  debito: 0.0099,
+  credito: 0.0099,
+  parcelado: {
+    2: 0.0299, 3: 0.0399, 4: 0.0499, 5: 0.0599,
+    6: 0.0699, 7: 0.0799, 8: 0.0899, 9: 0.0999,
+    10: 0.1099, 11: 0.1199, 12: 0.1299,
+  } as Record<number, number>,
+};
+
+const formatBRL = (v: number) =>
+  v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+
+export default function SimuladorTon() {
+  const [valor, setValor] = useState('');
+  const [modalidade, setModalidade] = useState<Modalidade>('credito');
   const [parcelas, setParcelas] = useState(12);
-  const [modalAberto, setModalAberto] = useState<'pagamento' | 'bandeira' | 'parcelas' | null>(null);
+  const [tipoOperacao, setTipoOperacao] = useState<TipoOperacao>('cobrar');
+  const [salvando, setSalvando] = useState(false);
+  const [feedback, setFeedback] = useState<{ tipo: 'sucesso' | 'erro'; msg: string } | null>(null);
 
-  // Taxas Ton Pro (Ajustadas conforme seu print de 21,39% em 12x)
-  const obterTaxa = (p: number) => {
-    const isVisaMaster = bandeira === 'Visa' || bandeira === 'Mastercard';
-    if (formaPagamento === 'Débito') return isVisaMaster ? 1.98 : 3.17;
-    
-    const tabelaVisaMaster = [4.86, 10.86, 12.24, 13.59, 14.92, 16.23, 17.65, 18.94, 20.21, 21.46, 22.69, 21.39]; 
-    const tabelaEloAmex = [6.05, 12.25, 13.63, 14.98, 16.31, 17.61, 19.01, 20.29, 21.55, 22.78, 23.99, 25.19];
+  const valorNum = parseFloat(valor.replace(',', '.')) || 0;
 
-    return isVisaMaster ? tabelaVisaMaster[p - 1] : tabelaEloAmex[p - 1];
+  const getTaxa = (mod: Modalidade, parc: number): number => {
+    if (mod === 'debito') return TAXAS.debito;
+    if (mod === 'credito') return TAXAS.credito;
+    return TAXAS.parcelado[parc] ?? TAXAS.parcelado[12];
   };
 
-  const formatarMoeda = (v: number) => v.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  const valorNum = parseFloat(valor.replace('.', '').replace(',', '.')) || 0;
+  const taxa = getTaxa(modalidade, parcelas);
 
-  // Cálculo para a tela de resultado atual
-  const taxaAtual = obterTaxa(parcelas);
-  const valorPraReceber = modo === 'receber' ? valorNum : valorNum * (1 - taxaAtual / 100);
-  const valorPraCobrar = modo === 'receber' ? valorNum / (1 - (taxaAtual / 100)) : valorNum;
+  /*
+   * COBRAR: você digita o valor da venda (bruto)
+   *   → você recebe = valorNum × (1 - taxa)
+   *   → cliente paga = valorNum  (o que foi digitado)
+   *
+   * RECEBER: você digita quanto quer receber líquido
+   *   → cliente paga = valorNum / (1 - taxa)   ← gross-up
+   *   → você recebe  = valorNum  (o que foi digitado)
+   */
+  const clientePaga = tipoOperacao === 'cobrar'
+    ? valorNum
+    : valorNum / (1 - taxa);
 
-  if (etapa === 'resultado') {
-    return (
-      <main className="min-h-screen bg-[#F0F2F5] flex flex-col items-center font-sans text-black">
-        <div className="w-full bg-white p-4 flex items-center border-b border-gray-200 sticky top-0 z-10">
-          <button onClick={() => setEtapa('input')} className="text-gray-600 text-xl">←</button>
-          <h1 className="text-lg font-bold text-gray-700 flex-1 text-center">Calculadora de taxas</h1>
-        </div>
+  const voceRecebe = tipoOperacao === 'cobrar'
+    ? valorNum * (1 - taxa)
+    : valorNum;
 
-        <div className="w-full max-w-md p-4 space-y-4">
-          <div className="bg-white p-6 rounded-2xl shadow-sm text-center">
-            <h2 className="text-gray-700 font-bold mb-4">Resultado da simulação</h2>
-            <div className="flex bg-[#E9ECEF] p-1 rounded-xl mb-6">
-              <button onClick={() => setModo('cobrar')} className={`flex-1 py-2 rounded-lg font-bold ${modo === 'cobrar' ? 'bg-white text-green-600 shadow-sm' : 'text-gray-500'}`}>Cobrar</button>
-              <button onClick={() => setModo('receber')} className={`flex-1 py-2 rounded-lg font-bold ${modo === 'receber' ? 'bg-white text-green-600 shadow-sm' : 'text-gray-500'}`}>Receber</button>
-            </div>
+  const taxaEmReais = clientePaga - voceRecebe;
+  const taxaPercent = (taxa * 100).toFixed(2).replace('.', ',');
 
-            <p className="text-gray-500 text-sm">Pra receber</p>
-            <p className="text-3xl font-black text-gray-800">R$ {formatarMoeda(valorPraReceber)}</p>
-            <p className="text-[10px] text-gray-400 mb-6">1x de R$ {formatarMoeda(valorPraReceber)}</p>
+  // Para o resumo salvo no Supabase sempre usamos o valor bruto (clientePaga)
+  const valorBruto = tipoOperacao === 'cobrar' ? valorNum : clientePaga;
 
-            <p className="text-gray-500 text-sm">Você deveria cobrar</p>
-            <p className="text-3xl font-black text-gray-800">R$ {formatarMoeda(valorPraCobrar)}</p>
-            <p className="text-[10px] text-gray-400">{parcelas}x de R$ {formatarMoeda(valorPraCobrar / parcelas)}</p>
-          </div>
+  const calcResumo = (mod: Modalidade, parc = 12) => {
+    const t = getTaxa(mod, parc);
+    return tipoOperacao === 'cobrar'
+      ? valorNum * (1 - t)          // recebe após taxa sobre o bruto digitado
+      : valorNum;                   // recebe o líquido digitado (não muda por modalidade no resumo)
+  };
 
-          <button onClick={() => setModalAberto('parcelas')} className="w-full bg-white p-4 rounded-xl flex justify-between items-center shadow-sm border border-gray-100 group active:bg-gray-50">
-            <div className="text-left">
-              <span className="text-gray-400 text-[10px] uppercase font-bold">Número de parcelas</span>
-              <p className="text-gray-800 font-bold text-sm">{parcelas}x de R$ {formatarMoeda(valorPraCobrar/parcelas)}</p>
-            </div>
-            <span className="bg-[#32BC43] text-white px-4 py-2 rounded-lg font-bold text-xs uppercase">Ver mais parcelas</span>
-          </button>
+  // Resumo das 3 colunas salvas no banco
+  const resumoDebito  = tipoOperacao === 'cobrar'
+    ? valorNum * (1 - TAXAS.debito)
+    : valorNum;
+  const resumoCredito = tipoOperacao === 'cobrar'
+    ? valorNum * (1 - TAXAS.credito)
+    : valorNum;
+  const resumo12x     = tipoOperacao === 'cobrar'
+    ? valorNum * (1 - TAXAS.parcelado[12])
+    : valorNum;
 
-          <div className="bg-white p-4 rounded-2xl shadow-sm text-sm border border-gray-100">
-            <div className="flex justify-between py-1"><span className="text-gray-500">Recebimento</span><span className="text-gray-700 font-medium">No mesmo dia</span></div>
-            <div className="flex justify-between py-1"><span className="text-gray-500">Taxas da venda</span><span className="text-red-500 font-bold">R$ {formatarMoeda(valorPraCobrar - valorPraReceber)} ({taxaAtual}%)</span></div>
-          </div>
+  const labelModalidade =
+    modalidade === 'debito'  ? 'Débito' :
+    modalidade === 'credito' ? 'Crédito à Vista' :
+    `Parcelado ${parcelas}x`;
 
-          <button className="w-full bg-[#32BC43] text-white py-4 rounded-xl font-bold flex justify-center items-center gap-2 shadow-lg active:scale-95 transition-transform">
-            <span>↗</span> Cobrar
-          </button>
-          <button onClick={() => setEtapa('input')} className="w-full bg-gray-200 text-gray-600 py-4 rounded-xl font-bold">Simular nova venda</button>
-        </div>
+  // Gera linhas de parcelas para exibir quando modalidade = parcelado
+  const linhasParcelas = tipoOperacao === 'receber'
+    ? Object.entries(TAXAS.parcelado).map(([n, t]) => ({
+        n: Number(n),
+        clientePagaParcela: (valorNum / (1 - t)) / Number(n),
+        clientePagaTotal:   valorNum / (1 - t),
+        taxa: t,
+      }))
+    : Object.entries(TAXAS.parcelado).map(([n, t]) => ({
+        n: Number(n),
+        voceRecebeTotal: valorNum * (1 - t),
+        valorParcela:    valorNum / Number(n),
+        taxa: t,
+      }));
 
-        {/* MODAL DE PARCELAS DETALHADO */}
-        {modalAberto === 'parcelas' && (
-          <div className="fixed inset-0 bg-black/50 z-50 flex flex-col justify-end">
-            <div className="bg-white rounded-t-3xl p-6 h-[80vh] flex flex-col">
-              <div className="flex justify-between items-center mb-6">
-                <h3 className="text-xl font-bold text-gray-800">Número de parcelas</h3>
-                <button onClick={() => setModalAberto(null)} className="text-gray-400 font-bold text-xs uppercase">Cancelar</button>
-              </div>
-              
-              <div className="overflow-y-auto flex-1 space-y-3 pr-2">
-                {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map((num) => {
-                  const taxaP = obterTaxa(num);
-                  const cobrarP = modo === 'receber' ? valorNum / (1 - (taxaP / 100)) : valorNum;
-                  return (
-                    <div 
-                      key={num} 
-                      onClick={() => { setParcelas(num); setModalAberto(null); }}
-                      className={`flex justify-between items-center p-4 rounded-xl border-2 transition-all cursor-pointer ${parcelas === num ? 'border-green-500 bg-green-50' : 'border-gray-100'}`}
-                    >
-                      <div className="text-left">
-                        <p className={`font-bold ${parcelas === num ? 'text-gray-800' : 'text-gray-600'}`}>
-                          {num === 1 ? 'À vista' : `${num}x`} - R$ {formatarMoeda(cobrarP)}
-                        </p>
-                        <p className="text-[10px] text-gray-400 font-medium">
-                          {num}x de R$ {formatarMoeda(cobrarP / num)}
-                        </p>
-                      </div>
-                      <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center ${parcelas === num ? 'border-green-500' : 'border-gray-300'}`}>
-                        {parcelas === num && <div className="w-3 h-3 bg-green-500 rounded-full" />}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-              <button onClick={() => setModalAberto(null)} className="w-full bg-[#32BC43] text-white py-4 rounded-xl font-bold mt-4 shadow-lg">Confirmar</button>
-            </div>
-          </div>
-        )}
-      </main>
-    );
-  }
+  const handleGerarLink = async () => {
+    if (valorNum <= 0) {
+      setFeedback({ tipo: 'erro', msg: 'Digite um valor válido antes de gerar o link.' });
+      return;
+    }
+    setSalvando(true);
+    setFeedback(null);
 
-  // TELA DE INPUT (Mantenha o código anterior da tela de input aqui, mas use o modalAberto para bandeira e pagamento)
+    const { error } = await supabase.from('simulacoes').insert({
+      valor_bruto:   parseFloat(valorBruto.toFixed(2)),
+      plano:         'Surubim Tornearia',
+      valor_debito:  parseFloat(resumoDebito.toFixed(2)),
+      valor_credito: parseFloat(resumoCredito.toFixed(2)),
+      valor_12x:     parseFloat(resumo12x.toFixed(2)),
+    });
+
+    setSalvando(false);
+    if (error) {
+      console.error('Supabase error:', error);
+      setFeedback({ tipo: 'erro', msg: 'Erro ao salvar. Tente novamente.' });
+    } else {
+      setFeedback({ tipo: 'sucesso', msg: '✓ Simulação salva com sucesso!' });
+    }
+  };
+
   return (
-    <main className="min-h-screen bg-[#F0F2F5] flex flex-col items-center font-sans text-black relative">
-      <div className="w-full bg-white p-4 flex items-center justify-between border-b border-gray-200">
-        <span className="text-2xl text-gray-400">✕</span>
-        <h1 className="text-lg font-bold text-gray-700">Calculadora de taxas</h1>
-        <div className="w-6"></div>
+    <div className="min-h-screen bg-[#0a0d1a] text-white flex flex-col items-center justify-center p-4 font-sans">
+
+      {/* Header */}
+      <div className="mb-7 flex flex-col items-center">
+        <div className="bg-white rounded-2xl px-6 py-3 shadow-[0_0_30px_#1a2a6c44] mb-3">
+          <Image
+            src="/logo.jpg"
+            alt="Surubim Tornearia"
+            width={220}
+            height={70}
+            className="object-contain"
+            priority
+          />
+        </div>
+        <p className="text-[#4a6fa5] text-[10px] uppercase tracking-widest">
+          Simulador de Taxas · TON
+        </p>
       </div>
 
-      <div className="w-full max-w-md p-4 space-y-4">
-        <div className="bg-[#E9ECEF] p-1 rounded-xl flex">
-          <button onClick={() => setModo('cobrar')} className={`flex-1 py-3 rounded-lg font-bold ${modo === 'cobrar' ? 'bg-white text-green-600 shadow-sm' : 'text-gray-500'}`}>Cobrar</button>
-          <button onClick={() => setModo('receber')} className={`flex-1 py-3 rounded-lg font-bold ${modo === 'receber' ? 'bg-white text-green-600 shadow-sm' : 'text-gray-500'}`}>Receber</button>
+      <div className="bg-[#0f1529] w-full max-w-md rounded-3xl p-6 border border-[#1e2d5a] shadow-2xl space-y-5">
+
+        {/* Tipo de Operação */}
+        <div>
+          <label className="text-[#4a6fa5] text-[10px] uppercase tracking-widest font-bold block mb-2">
+            Tipo de Operação
+          </label>
+          <div className="grid grid-cols-2 gap-2">
+            {(['cobrar', 'receber'] as TipoOperacao[]).map((op) => (
+              <button
+                key={op}
+                onClick={() => { setTipoOperacao(op); setFeedback(null); }}
+                className={`py-3 rounded-xl font-bold text-sm uppercase tracking-wide transition-all border ${
+                  tipoOperacao === op
+                    ? 'bg-[#1a2fa8] text-white shadow-[0_0_18px_#1a2fa855] border-[#3a5fd4]'
+                    : 'bg-[#131c3a] text-[#4a6fa5] hover:bg-[#1a2440] border-[#1e2d5a]'
+                }`}
+              >
+                {op === 'cobrar' ? '💳 Quero Cobrar' : '💰 Quero Receber'}
+              </button>
+            ))}
+          </div>
+          <p className="text-[#2d3f6a] text-[10px] mt-2 leading-snug">
+            {tipoOperacao === 'cobrar'
+              ? 'Digite o valor da venda → veja quanto você recebe após a taxa.'
+              : 'Digite quanto quer receber líquido → veja quanto cobrar do cliente.'}
+          </p>
         </div>
 
-        <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
-          <p className="text-center text-gray-500 text-sm mb-2">Quanto você quer {modo}?</p>
-          <div className="border-2 border-green-500 rounded-xl p-4 flex items-center bg-white">
-            <span className="text-2xl font-bold mr-2 text-gray-800">R$</span>
-            <input 
-              type="text" 
-              value={valor} 
-              onChange={(e) => setValor(e.target.value)} 
-              className="w-full text-left text-3xl font-bold outline-none bg-transparent text-gray-800"
+        {/* Valor */}
+        <div>
+          <label className="text-[#4a6fa5] text-[10px] uppercase tracking-widest font-bold block mb-1">
+            {tipoOperacao === 'cobrar' ? 'Valor da venda' : 'Valor que deseja receber'}
+          </label>
+          <div className="flex items-center border-b border-[#1e2d5a] focus-within:border-[#3a5fd4] transition-colors pb-1">
+            <span className="text-[#3a5fd4] text-2xl font-bold mr-2">R$</span>
+            <input
+              type="number"
+              min="0"
+              value={valor}
+              onChange={(e) => { setValor(e.target.value); setFeedback(null); }}
+              placeholder="0,00"
+              className="flex-1 bg-transparent text-4xl font-bold text-[#3a7bd4] outline-none placeholder-[#1e2d5a]"
             />
           </div>
         </div>
 
-        <div className="bg-white rounded-2xl shadow-sm divide-y border border-gray-100 font-sans">
-          <div className="p-4 font-bold text-gray-800">Personalize sua simulação</div>
-          <OptionRow label="Onde será a venda?" value="Ton Pro | até R$2 mil" />
-          <OptionRow label="Forma de pagamento" value={formaPagamento} onClick={() => setModalAberto('pagamento')} />
-          <OptionRow label="Bandeira" value={bandeira} onClick={() => setModalAberto('bandeira')} />
-          <OptionRow label="Número de parcelas" value={parcelas === 1 ? 'À vista' : `${parcelas}x`} onClick={() => setModalAberto('parcelas')} />
-          <OptionRow label="Prazo pra receber" value="No mesmo dia" />
-        </div>
-
-        <button onClick={() => setEtapa('resultado')} className="w-full bg-[#32BC43] text-white py-4 rounded-xl font-bold shadow-md active:scale-95 transition-transform">Simular venda</button>
-      </div>
-
-      {/* MODAL GERAL (PAGAMENTO E BANDEIRA) */}
-      {(modalAberto === 'pagamento' || modalAberto === 'bandeira' || (modalAberto === 'parcelas' && etapa === 'input')) && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex flex-col justify-end">
-          <div className="bg-white rounded-t-3xl p-6 space-y-4 max-h-[80vh] overflow-hidden flex flex-col">
-            <div className="flex justify-between items-center mb-2">
-              <h3 className="text-xl font-bold text-gray-800 uppercase text-sm">
-                {modalAberto === 'pagamento' ? 'Forma de pagamento' : modalAberto === 'bandeira' ? 'Bandeira' : 'Parcelas'}
-              </h3>
-              <button onClick={() => setModalAberto(null)} className="text-gray-400 font-bold text-xs">FECHAR</button>
-            </div>
-            
-            <div className="overflow-y-auto space-y-2 pb-4">
-              {modalAberto === 'bandeira' && ['Visa', 'Mastercard', 'Elo', 'American Express'].map(opt => (
-                <RadioButton key={opt} label={opt} selected={bandeira === opt} onClick={() => {setBandeira(opt); setModalAberto(null);}} />
-              ))}
-              {modalAberto === 'pagamento' && ['Crédito', 'Débito'].map(opt => (
-                <RadioButton key={opt} label={opt} selected={formaPagamento === opt} onClick={() => {setFormaPagamento(opt as any); setModalAberto(null);}} />
-              ))}
-              {modalAberto === 'parcelas' && [1,2,3,4,5,6,7,8,9,10,11,12].map(num => (
-                <RadioButton key={num} label={num === 1 ? 'À vista' : `${num}x`} selected={parcelas === num} onClick={() => {setParcelas(num); setModalAberto(null);}} />
-              ))}
-            </div>
+        {/* Modalidade */}
+        <div>
+          <label className="text-[#4a6fa5] text-[10px] uppercase tracking-widest font-bold block mb-2">
+            Modalidade
+          </label>
+          <div className="grid grid-cols-3 gap-2">
+            {(['debito', 'credito', 'parcelado'] as Modalidade[]).map((m) => (
+              <button
+                key={m}
+                onClick={() => setModalidade(m)}
+                className={`py-2 px-1 rounded-xl font-semibold text-xs uppercase transition-all border ${
+                  modalidade === m
+                    ? 'bg-[#1a2fa8] text-white border-[#3a5fd4] shadow-[0_0_12px_#1a2fa840]'
+                    : 'bg-[#131c3a] text-[#4a6fa5] border-[#1e2d5a] hover:bg-[#1a2440]'
+                }`}
+              >
+                {m === 'debito' ? 'Débito' : m === 'credito' ? 'Crédito' : 'Parcelado'}
+              </button>
+            ))}
           </div>
         </div>
-      )}
-    </main>
-  );
-}
 
-// Funções Auxiliares permanecem as mesmas
-function OptionRow({ label, value, onClick }: any) {
-  return (
-    <div className="p-4 flex justify-between items-center cursor-pointer hover:bg-gray-50" onClick={onClick}>
-      <div><p className="text-[10px] text-gray-400 uppercase font-bold">{label}</p><p className="text-gray-800 font-bold">{value}</p></div>
-      <span className="text-green-500 font-bold text-sm">Alterar</span>
-    </div>
-  );
-}
+        {/* Resultado principal (débito ou crédito à vista) */}
+        {valorNum > 0 && modalidade !== 'parcelado' && (
+          <div className="bg-[#0d1225] rounded-2xl p-4 border border-[#1e2d5a] space-y-3">
+            <div className="flex justify-between items-center">
+              <span className="text-[#4a6fa5] text-xs uppercase">Modalidade</span>
+              <span className="text-white text-sm font-semibold">{labelModalidade}</span>
+            </div>
+            <div className="flex justify-between items-center">
+              <span className="text-[#4a6fa5] text-xs uppercase">Taxa</span>
+              <span className="text-yellow-400 font-bold">{taxaPercent}%</span>
+            </div>
+            <div className="flex justify-between items-center">
+              <span className="text-[#4a6fa5] text-xs uppercase">Taxa em R$</span>
+              <span className="text-red-400 font-bold">− {formatBRL(taxaEmReais)}</span>
+            </div>
+            <div className="h-px bg-[#1e2d5a]" />
+            <div className="flex justify-between items-center">
+              <span className="text-[#4a6fa5] text-xs uppercase">Cliente paga</span>
+              <span className={`text-xl font-black ${tipoOperacao === 'receber' ? 'text-[#3a7bd4]' : 'text-white'}`}>
+                {formatBRL(clientePaga)}
+              </span>
+            </div>
+            <div className="flex justify-between items-center">
+              <span className="text-[#4a6fa5] text-xs uppercase">Você recebe</span>
+              <span className={`text-xl font-black ${tipoOperacao === 'cobrar' ? 'text-[#3a7bd4]' : 'text-white'}`}>
+                {formatBRL(voceRecebe)}
+              </span>
+            </div>
+          </div>
+        )}
 
-function RadioButton({ label, selected, onClick }: any) {
-  return (
-    <div onClick={onClick} className={`flex justify-between items-center p-4 rounded-xl border-2 transition-all ${selected ? 'border-green-500 bg-green-50' : 'border-gray-100'}`}>
-      <span className={`font-medium ${selected ? 'text-gray-800' : 'text-gray-500'}`}>{label}</span>
-      <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center ${selected ? 'border-green-500' : 'border-gray-300'}`}>
-        {selected && <div className="w-3 h-3 bg-green-500 rounded-full" />}
+        {/* Tabela de parcelas */}
+        {valorNum > 0 && modalidade === 'parcelado' && (
+          <div className="bg-[#0d1225] rounded-2xl p-4 border border-[#1e2d5a] space-y-3">
+            <p className="text-[#4a6fa5] text-[10px] uppercase tracking-widest font-bold">
+              {tipoOperacao === 'cobrar'
+                ? 'Valor da venda: ' + formatBRL(valorNum) + ' → você recebe:'
+                : 'Você quer receber: ' + formatBRL(valorNum) + ' → cliente paga:'}
+            </p>
+
+            <div className="space-y-1.5">
+              {/* Cabeçalho */}
+              <div className="grid grid-cols-4 text-[#2d3f6a] text-[9px] uppercase px-1">
+                <span>Parcelas</span>
+                <span className="text-right">Taxa</span>
+                <span className="text-right">
+                  {tipoOperacao === 'cobrar' ? 'Você recebe' : 'Cliente paga'}
+                </span>
+                <span className="text-right">Valor/parc.</span>
+              </div>
+
+              {tipoOperacao === 'cobrar'
+                ? (linhasParcelas as { n: number; voceRecebeTotal: number; valorParcela: number; taxa: number }[]).map((l) => (
+                    <button
+                      key={l.n}
+                      onClick={() => setParcelas(l.n)}
+                      className={`w-full grid grid-cols-4 items-center px-3 py-2 rounded-xl text-xs transition-all border ${
+                        parcelas === l.n
+                          ? 'bg-[#1a2fa8] border-[#3a5fd4] text-white'
+                          : 'bg-[#131c3a] border-[#1e2d5a] text-[#7a9fd4] hover:bg-[#1a2440]'
+                      }`}
+                    >
+                      <span className="font-bold text-left">{l.n}x</span>
+                      <span className="text-right text-yellow-400">{(l.taxa * 100).toFixed(2).replace('.', ',')}%</span>
+                      <span className="text-right font-bold">{formatBRL(l.voceRecebeTotal)}</span>
+                      <span className="text-right">{formatBRL(l.valorParcela)}</span>
+                    </button>
+                  ))
+                : (linhasParcelas as { n: number; clientePagaTotal: number; clientePagaParcela: number; taxa: number }[]).map((l) => (
+                    <button
+                      key={l.n}
+                      onClick={() => setParcelas(l.n)}
+                      className={`w-full grid grid-cols-4 items-center px-3 py-2 rounded-xl text-xs transition-all border ${
+                        parcelas === l.n
+                          ? 'bg-[#1a2fa8] border-[#3a5fd4] text-white'
+                          : 'bg-[#131c3a] border-[#1e2d5a] text-[#7a9fd4] hover:bg-[#1a2440]'
+                      }`}
+                    >
+                      <span className="font-bold text-left">{l.n}x</span>
+                      <span className="text-right text-yellow-400">{(l.taxa * 100).toFixed(2).replace('.', ',')}%</span>
+                      <span className="text-right font-bold">{formatBRL(l.clientePagaTotal)}</span>
+                      <span className="text-right">{formatBRL(l.clientePagaParcela)}</span>
+                    </button>
+                  ))
+              }
+            </div>
+          </div>
+        )}
+
+        {/* Feedback */}
+        {feedback && (
+          <div className={`rounded-xl px-4 py-3 text-sm font-semibold text-center ${
+            feedback.tipo === 'sucesso'
+              ? 'bg-[#0a1f5c] text-[#7aadff] border border-[#1a3a8a]'
+              : 'bg-red-900/30 text-red-400 border border-red-800'
+          }`}>
+            {feedback.msg}
+          </div>
+        )}
+
+        {/* Botão */}
+        <button
+          onClick={handleGerarLink}
+          disabled={salvando}
+          className="w-full bg-[#1a2fa8] text-white font-black py-4 rounded-2xl hover:bg-[#2040c8] active:scale-95 transition-all uppercase tracking-tight text-sm disabled:opacity-50 disabled:cursor-not-allowed border border-[#3a5fd4] shadow-[0_0_20px_#1a2fa833]"
+        >
+          {salvando ? 'Salvando...' : 'Gerar Link de Cobrança'}
+        </button>
       </div>
+
+      <p className="mt-6 text-[#1e2d5a] text-[9px] text-center max-w-[260px] uppercase leading-tight">
+        Simulador independente. As taxas podem ser alteradas pela operadora sem aviso prévio.
+      </p>
     </div>
   );
 }
