@@ -1,0 +1,314 @@
+'use client'
+
+import { useEffect, useState } from 'react'
+import { createClient } from '@/lib/supabase'
+import { Card, CardHeader, CardTitle } from '@/components/ui/Card'
+import { Button } from '@/components/ui/Button'
+import { Input } from '@/components/ui/Input'
+import { Modal } from '@/components/ui/Modal'
+import { Badge } from '@/components/ui/Badge'
+import { Table, TableHead, TableBody, Th, Td, TableRow } from '@/components/ui/Table'
+import { LoadingSpinner } from '@/components/ui/LoadingSpinner'
+import { ContaFixa, ContaVariavel, StatusConta, Fornecedor } from '@/types'
+import { formatarMoeda, formatarData, statusLancamento } from '@/lib/utils'
+
+// ─── Contas fixas ─────────────────────────────────────────────
+function ContaFixaForm({
+  inicial, onGuardar, onCancelar,
+}: { inicial?: Partial<ContaFixa>; onGuardar: (d: Partial<ContaFixa>) => Promise<void>; onCancelar: () => void }) {
+  const [descricao, setDescricao] = useState(inicial?.descricao ?? '')
+  const [valor, setValor] = useState(inicial?.valor?.toString() ?? '')
+  const [diaVencimento, setDiaVencimento] = useState(inicial?.dia_vencimento?.toString() ?? '10')
+  const [categoria, setCategoria] = useState(inicial?.categoria ?? '')
+  const [ativo, setAtivo] = useState(inicial?.ativo ?? true)
+  const [carregando, setCarregando] = useState(false)
+  const [erro, setErro] = useState('')
+
+  async function handleSubmit() {
+    if (!descricao.trim() || !valor) { setErro('Descrição e valor são obrigatórios'); return }
+    setErro('')
+    setCarregando(true)
+    await onGuardar({
+      descricao: descricao.trim(),
+      valor: parseFloat(valor),
+      dia_vencimento: parseInt(diaVencimento) || 1,
+      categoria: categoria.trim() || null,
+      ativo,
+    })
+    setCarregando(false)
+  }
+
+  return (
+    <div className="space-y-4">
+      <Input label="Descrição *" value={descricao} onChange={e => setDescricao(e.target.value)} erro={erro} placeholder="Ex: Aluguel, energia, internet..." />
+      <div className="grid grid-cols-2 gap-4">
+        <Input label="Valor *" type="number" step="0.01" prefixo="R$" value={valor} onChange={e => setValor(e.target.value)} />
+        <Input label="Dia do vencimento" type="number" min="1" max="31" value={diaVencimento} onChange={e => setDiaVencimento(e.target.value)} />
+      </div>
+      <Input label="Categoria" value={categoria ?? ''} onChange={e => setCategoria(e.target.value)} placeholder="Ex: Estrutura, utilidades..." />
+      <div className="flex items-center gap-2">
+        <input type="checkbox" id="ativo" checked={ativo} onChange={e => setAtivo(e.target.checked)} className="rounded border-gray-300 text-blue-600" />
+        <label htmlFor="ativo" className="text-sm text-gray-700">Ativa</label>
+      </div>
+      <div className="flex justify-end gap-3 pt-2">
+        <Button variante="secundario" onClick={onCancelar} disabled={carregando}>Cancelar</Button>
+        <Button variante="primario" carregando={carregando} onClick={handleSubmit}>{inicial?.id ? 'Guardar' : 'Criar'}</Button>
+      </div>
+    </div>
+  )
+}
+
+// ─── Contas variáveis ───────────────────────────────────────
+function ContaVariavelForm({
+  inicial, fornecedores, onGuardar, onCancelar,
+}: {
+  inicial?: Partial<ContaVariavel>
+  fornecedores: Fornecedor[]
+  onGuardar: (d: Partial<ContaVariavel>) => Promise<void>
+  onCancelar: () => void
+}) {
+  const [descricao, setDescricao] = useState(inicial?.descricao ?? '')
+  const [valor, setValor] = useState(inicial?.valor?.toString() ?? '')
+  const [dataVencimento, setDataVencimento] = useState(inicial?.data_vencimento ?? new Date().toISOString().slice(0, 10))
+  const [fornecedorId, setFornecedorId] = useState(inicial?.fornecedor_id ?? '')
+  const [status, setStatus] = useState<StatusConta>(inicial?.status ?? 'pendente')
+  const [carregando, setCarregando] = useState(false)
+  const [erro, setErro] = useState('')
+
+  async function handleSubmit() {
+    if (!descricao.trim() || !valor) { setErro('Descrição e valor são obrigatórios'); return }
+    setErro('')
+    setCarregando(true)
+    await onGuardar({
+      descricao: descricao.trim(),
+      valor: parseFloat(valor),
+      data_vencimento: dataVencimento,
+      fornecedor_id: fornecedorId || null,
+      status,
+    })
+    setCarregando(false)
+  }
+
+  return (
+    <div className="space-y-4">
+      <Input label="Descrição *" value={descricao} onChange={e => setDescricao(e.target.value)} erro={erro} />
+      <div className="grid grid-cols-2 gap-4">
+        <Input label="Valor *" type="number" step="0.01" prefixo="R$" value={valor} onChange={e => setValor(e.target.value)} />
+        <Input label="Vencimento" type="date" value={dataVencimento} onChange={e => setDataVencimento(e.target.value)} />
+      </div>
+      <div className="flex flex-col gap-1">
+        <label className="text-sm font-medium text-gray-700">Fornecedor</label>
+        <select value={fornecedorId} onChange={e => setFornecedorId(e.target.value)}
+          className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+          <option value="">—</option>
+          {fornecedores.map(f => <option key={f.id} value={f.id}>{f.nome}</option>)}
+        </select>
+      </div>
+      <div className="flex flex-col gap-1">
+        <label className="text-sm font-medium text-gray-700">Estado</label>
+        <select value={status} onChange={e => setStatus(e.target.value as StatusConta)}
+          className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+          <option value="pendente">Pendente</option>
+          <option value="pago">Pago</option>
+          <option value="cancelado">Cancelado</option>
+        </select>
+      </div>
+      <div className="flex justify-end gap-3 pt-2">
+        <Button variante="secundario" onClick={onCancelar} disabled={carregando}>Cancelar</Button>
+        <Button variante="primario" carregando={carregando} onClick={handleSubmit}>{inicial?.id ? 'Guardar' : 'Criar'}</Button>
+      </div>
+    </div>
+  )
+}
+
+export default function ContasPage() {
+  const [aba, setAba] = useState<'fixas' | 'variaveis'>('fixas')
+  const [fixas, setFixas] = useState<ContaFixa[]>([])
+  const [variaveis, setVariaveis] = useState<ContaVariavel[]>([])
+  const [fornecedores, setFornecedores] = useState<Fornecedor[]>([])
+  const [carregando, setCarregando] = useState(true)
+  const [modalAberto, setModalAberto] = useState(false)
+  const [editandoFixa, setEditandoFixa] = useState<ContaFixa | undefined>()
+  const [editandoVariavel, setEditandoVariavel] = useState<ContaVariavel | undefined>()
+  const [busca, setBusca] = useState('')
+  const [filtroStatus, setFiltroStatus] = useState<StatusConta | 'todos'>('todos')
+
+  async function carregar() {
+    setCarregando(true)
+    const supabase = createClient()
+    const [fixasRes, variaveisRes, fornecedoresRes] = await Promise.all([
+      supabase.from('contas_fixas').select('*').order('dia_vencimento'),
+      supabase.from('contas_variaveis').select('*, fornecedor:fornecedores(*)').order('data_vencimento'),
+      supabase.from('fornecedores').select('*').eq('ativo', true).order('nome'),
+    ])
+    setFixas((fixasRes.data ?? []) as ContaFixa[])
+    setVariaveis((variaveisRes.data ?? []) as ContaVariavel[])
+    setFornecedores((fornecedoresRes.data ?? []) as Fornecedor[])
+    setCarregando(false)
+  }
+
+  useEffect(() => { carregar() }, [])
+
+  async function guardarFixa(dados: Partial<ContaFixa>) {
+    const supabase = createClient()
+    if (editandoFixa) await supabase.from('contas_fixas').update(dados).eq('id', editandoFixa.id)
+    else await supabase.from('contas_fixas').insert(dados)
+    setModalAberto(false); setEditandoFixa(undefined)
+    await carregar()
+  }
+
+  async function guardarVariavel(dados: Partial<ContaVariavel>) {
+    const supabase = createClient()
+    if (editandoVariavel) await supabase.from('contas_variaveis').update(dados).eq('id', editandoVariavel.id)
+    else await supabase.from('contas_variaveis').insert(dados)
+    setModalAberto(false); setEditandoVariavel(undefined)
+    await carregar()
+  }
+
+  async function excluirFixa(id: string) {
+    if (!confirm('Excluir esta conta fixa?')) return
+    const supabase = createClient()
+    await supabase.from('contas_fixas').delete().eq('id', id)
+    await carregar()
+  }
+
+  async function excluirVariavel(id: string) {
+    if (!confirm('Excluir esta conta?')) return
+    const supabase = createClient()
+    await supabase.from('contas_variaveis').delete().eq('id', id)
+    await carregar()
+  }
+
+  if (carregando) return <LoadingSpinner texto="A carregar contas..." />
+
+  const fixasFiltradas = fixas.filter(c => c.descricao.toLowerCase().includes(busca.toLowerCase()))
+  const variaveisFiltradas = variaveis
+    .filter(c => filtroStatus === 'todos' || c.status === filtroStatus)
+    .filter(c => c.descricao.toLowerCase().includes(busca.toLowerCase()) || (c.fornecedor?.nome ?? '').toLowerCase().includes(busca.toLowerCase()))
+
+  return (
+    <div className="space-y-6">
+      <Card>
+        <CardHeader>
+          <CardTitle>Contas a pagar</CardTitle>
+          <Button
+            variante="primario"
+            onClick={() => { setEditandoFixa(undefined); setEditandoVariavel(undefined); setModalAberto(true) }}
+          >
+            + Nova conta {aba === 'fixas' ? 'fixa' : 'variável'}
+          </Button>
+        </CardHeader>
+        <div className="flex gap-2">
+          <button onClick={() => setAba('fixas')} className={`px-3 py-1.5 rounded-full text-xs font-medium ${aba === 'fixas' ? 'bg-gray-900 text-white' : 'bg-gray-100 text-gray-600'}`}>
+            Contas fixas
+          </button>
+          <button onClick={() => setAba('variaveis')} className={`px-3 py-1.5 rounded-full text-xs font-medium ${aba === 'variaveis' ? 'bg-gray-900 text-white' : 'bg-gray-100 text-gray-600'}`}>
+            Contas variáveis
+          </button>
+        </div>
+        <div className="flex flex-col sm:flex-row gap-2 pt-1">
+          <Input placeholder="Buscar por descrição..." value={busca} onChange={e => setBusca(e.target.value)} className="max-w-sm" />
+          {aba === 'variaveis' && (
+            <div className="flex gap-2">
+              {(['todos', 'pendente', 'pago', 'cancelado'] as const).map(s => (
+                <button
+                  key={s}
+                  onClick={() => setFiltroStatus(s)}
+                  className={`px-3 py-1.5 rounded-full text-xs font-medium capitalize ${filtroStatus === s ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
+                >
+                  {s === 'todos' ? 'Todos' : statusLancamento[s].label}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      </Card>
+
+      {aba === 'fixas' ? (
+        <Card padding={false}>
+          {fixasFiltradas.length === 0 ? (
+            <p className="text-sm text-gray-400 text-center py-12">Nenhuma conta fixa cadastrada</p>
+          ) : (
+            <Table>
+              <TableHead>
+                <tr>
+                  <Th>Descrição</Th>
+                  <Th>Categoria</Th>
+                  <Th>Dia venc.</Th>
+                  <Th className="text-right">Valor</Th>
+                  <Th>Estado</Th>
+                  <Th className="text-right">Ações</Th>
+                </tr>
+              </TableHead>
+              <TableBody>
+                {fixasFiltradas.map(c => (
+                  <TableRow key={c.id}>
+                    <Td className="font-medium text-gray-900">{c.descricao}</Td>
+                    <Td>{c.categoria ?? '—'}</Td>
+                    <Td>Dia {c.dia_vencimento}</Td>
+                    <Td className="text-right">{formatarMoeda(c.valor)}</Td>
+                    <Td><Badge cor={c.ativo ? 'green' : 'gray'}>{c.ativo ? 'Ativa' : 'Inativa'}</Badge></Td>
+                    <Td className="text-right">
+                      <div className="flex items-center justify-end gap-2">
+                        <Button variante="ghost" tamanho="sm" onClick={() => { setEditandoFixa(c); setModalAberto(true) }}>Editar</Button>
+                        <Button variante="perigo" tamanho="sm" onClick={() => excluirFixa(c.id)}>Excluir</Button>
+                      </div>
+                    </Td>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </Card>
+      ) : (
+        <Card padding={false}>
+          {variaveisFiltradas.length === 0 ? (
+            <p className="text-sm text-gray-400 text-center py-12">Nenhuma conta variável encontrada</p>
+          ) : (
+            <Table>
+              <TableHead>
+                <tr>
+                  <Th>Descrição</Th>
+                  <Th>Fornecedor</Th>
+                  <Th>Vencimento</Th>
+                  <Th className="text-right">Valor</Th>
+                  <Th>Estado</Th>
+                  <Th className="text-right">Ações</Th>
+                </tr>
+              </TableHead>
+              <TableBody>
+                {variaveisFiltradas.map(c => (
+                  <TableRow key={c.id}>
+                    <Td className="font-medium text-gray-900">{c.descricao}</Td>
+                    <Td>{c.fornecedor?.nome ?? '—'}</Td>
+                    <Td>{formatarData(c.data_vencimento)}</Td>
+                    <Td className="text-right">{formatarMoeda(c.valor)}</Td>
+                    <Td><Badge cor={statusLancamento[c.status].cor as 'gray' | 'blue' | 'green' | 'yellow' | 'orange' | 'red'}>{statusLancamento[c.status].label}</Badge></Td>
+                    <Td className="text-right">
+                      <div className="flex items-center justify-end gap-2">
+                        <Button variante="ghost" tamanho="sm" onClick={() => { setEditandoVariavel(c); setModalAberto(true) }}>Editar</Button>
+                        <Button variante="perigo" tamanho="sm" onClick={() => excluirVariavel(c.id)}>Excluir</Button>
+                      </div>
+                    </Td>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </Card>
+      )}
+
+      <Modal
+        aberto={modalAberto}
+        onFechar={() => { setModalAberto(false); setEditandoFixa(undefined); setEditandoVariavel(undefined) }}
+        titulo={aba === 'fixas' ? (editandoFixa ? 'Editar conta fixa' : 'Nova conta fixa') : (editandoVariavel ? 'Editar conta' : 'Nova conta variável')}
+      >
+        {aba === 'fixas' ? (
+          <ContaFixaForm inicial={editandoFixa} onGuardar={guardarFixa} onCancelar={() => setModalAberto(false)} />
+        ) : (
+          <ContaVariavelForm inicial={editandoVariavel} fornecedores={fornecedores} onGuardar={guardarVariavel} onCancelar={() => setModalAberto(false)} />
+        )}
+      </Modal>
+    </div>
+  )
+}
