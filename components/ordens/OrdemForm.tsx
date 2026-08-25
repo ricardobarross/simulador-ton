@@ -1,13 +1,14 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { OrdemServico, ItemOrcamento, Cliente, Servico, PagamentoOS } from '@/types'
+import { OrdemServico, ItemOrcamento, Cliente, Servico, Anexo } from '@/types'
 import { Input } from '@/components/ui/Input'
 import { Button } from '@/components/ui/Button'
 import { SearchableSelect } from '@/components/ui/SearchableSelect'
-import { FormaPagamentoSplit } from '@/components/financeiro/FormaPagamentoSplit'
+import { UploadAnexos } from '@/components/ui/UploadAnexos'
 import { createClient } from '@/lib/supabase'
 import { formatarMoeda } from '@/lib/utils'
+import { verificarFiadoVencidoCliente, AlertaFiadoCliente } from '@/lib/cobranca'
 
 interface OrdemFormProps {
   inicial?: Partial<OrdemServico>
@@ -30,18 +31,18 @@ export function OrdemForm({ inicial, onGuardar, onCancelar }: OrdemFormProps) {
   const [clienteId, setClienteId] = useState(inicial?.cliente_id ?? '')
   const [observacoes, setObservacoes] = useState(inicial?.observacoes ?? '')
   const [desconto, setDesconto] = useState(inicial?.desconto ?? 0)
-  const [pagamentos, setPagamentos] = useState<PagamentoOS[]>(
-    inicial?.pagamentos?.length ? inicial.pagamentos : [{ forma: inicial?.forma_pagamento ?? 'Dinheiro', valor: inicial?.total ?? 0 }]
-  )
   const [itens, setItens] = useState<ItemOrcamento[]>(inicial?.itens?.length ? inicial.itens : [itemVazio()])
+  const [anexos, setAnexos] = useState<Anexo[]>(inicial?.anexos ?? [])
+  const [pastaAnexos] = useState(() => inicial?.id ?? crypto.randomUUID())
   const [carregando, setCarregando] = useState(false)
   const [erros, setErros] = useState<Record<string, string>>({})
+  const [alertaFiado, setAlertaFiado] = useState<AlertaFiadoCliente | null>(null)
 
   useEffect(() => {
     async function carregarDados() {
       const supabase = createClient()
       const [{ data: cli }, { data: srv }] = await Promise.all([
-        supabase.from('clientes').select('id, nome').eq('ativo', true).order('nome'),
+        supabase.from('clientes').select('id, nome').eq('ativo', true).is('deleted_at', null).order('nome'),
         supabase.from('servicos').select('id, nome, categoria, preco_base').eq('ativo', true).order('categoria').order('nome'),
       ])
       setClientes(cli ?? [])
@@ -49,6 +50,16 @@ export function OrdemForm({ inicial, onGuardar, onCancelar }: OrdemFormProps) {
     }
     carregarDados()
   }, [])
+
+  useEffect(() => {
+    if (!clienteId) { setAlertaFiado(null); return }
+    let cancelado = false
+    const supabase = createClient()
+    verificarFiadoVencidoCliente(supabase, clienteId).then(alerta => {
+      if (!cancelado) setAlertaFiado(alerta)
+    })
+    return () => { cancelado = true }
+  }, [clienteId])
 
   function atualizarItem(index: number, campo: keyof ItemOrcamento, valor: string | number) {
     setItens(prev => prev.map((item, i) => {
@@ -89,10 +100,6 @@ export function OrdemForm({ inicial, onGuardar, onCancelar }: OrdemFormProps) {
     const e: Record<string, string> = {}
     if (!clienteId) e.cliente = 'Selecciona um cliente'
     itens.forEach((item, i) => { if (!item.descricao.trim()) e[`item_${i}`] = 'Descrição obrigatória' })
-    if (pagamentos.length > 1) {
-      const soma = pagamentos.reduce((s, p) => s + (Number(p.valor) || 0), 0)
-      if (Math.round((soma - total) * 100) !== 0) e.pagamento = 'A soma das formas de pagamento precisa bater com o total da O.S.'
-    }
     setErros(e)
     return Object.keys(e).length === 0
   }
@@ -100,10 +107,9 @@ export function OrdemForm({ inicial, onGuardar, onCancelar }: OrdemFormProps) {
   async function handleSubmit() {
     if (!validar()) return
     setCarregando(true)
-    // Se não foi dividido, a única linha sempre reflete o valor total atual (mesmo que os itens tenham mudado).
-    const pagamentosFinal = pagamentos.length > 1 ? pagamentos : [{ forma: pagamentos[0].forma, valor: total }]
-    const formaResumo = pagamentosFinal.map(p => p.forma).join(' + ')
-    await onGuardar({ cliente_id: clienteId, itens, subtotal, desconto, total, forma_pagamento: formaResumo, pagamentos: pagamentosFinal, observacoes })
+    // Sem forma de pagamento aqui — o cliente já autorizou o serviço, o pagamento
+    // só é registado depois, quando ele vier buscar (ver "Registar pagamento").
+    await onGuardar({ cliente_id: clienteId, itens, subtotal, desconto, total, observacoes, anexos })
     setCarregando(false)
   }
 
@@ -118,6 +124,14 @@ export function OrdemForm({ inicial, onGuardar, onCancelar }: OrdemFormProps) {
           options={clientes.map(c => ({ value: c.id, label: c.nome }))}
         />
         {erros.cliente && <p className="text-xs text-red-600">{erros.cliente}</p>}
+        {alertaFiado && (
+          <p className="flex items-center gap-1.5 text-xs font-medium text-red-600 bg-red-50 border border-red-200 rounded-lg px-2.5 py-1.5 mt-1">
+            <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
+            </svg>
+            Cliente com {alertaFiado.quantidadeVencidos} fiado(s) vencido(s) — {formatarMoeda(alertaFiado.totalVencido)} em atraso
+          </p>
+        )}
       </div>
 
       <div>
@@ -203,11 +217,6 @@ export function OrdemForm({ inicial, onGuardar, onCancelar }: OrdemFormProps) {
         </div>
       </div>
 
-      <div>
-        <FormaPagamentoSplit total={total} pagamentos={pagamentos} onChange={setPagamentos} />
-        {erros.pagamento && <p className="text-xs text-red-600 mt-1">{erros.pagamento}</p>}
-      </div>
-
       <div className="flex flex-col gap-1">
         <label className="text-sm font-medium text-gray-700">Observações</label>
         <textarea
@@ -217,6 +226,8 @@ export function OrdemForm({ inicial, onGuardar, onCancelar }: OrdemFormProps) {
           className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
         />
       </div>
+
+      <UploadAnexos anexos={anexos} onChange={setAnexos} pasta={`ordens/${pastaAnexos}`} />
 
       <div className="flex justify-end gap-3 pt-2">
         <Button variante="secundario" onClick={onCancelar} disabled={carregando}>Cancelar</Button>

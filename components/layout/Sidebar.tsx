@@ -110,6 +110,16 @@ const navegacaoSecundaria = [
     ),
   },
   {
+    label: 'Retalhos',
+    href: '/retalhos',
+    icon: (
+      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
+          d="M4 7V5a1 1 0 011-1h4M4 7h16M4 7v11a1 1 0 001 1h4m11-12V5a1 1 0 00-1-1h-4m5 3v11a1 1 0 01-1 1h-4m-6 0h6m-6 0V10m6 8V10" />
+      </svg>
+    ),
+  },
+  {
     label: 'Simulador TON',
     href: '/simulador',
     icon: (

@@ -27,8 +27,16 @@ export function PagamentoFiadoForm({ fiado, saldoRestante, onGuardar, onCancelar
     if (valorNum > saldoRestante + 0.01) { setErro(`O valor não pode ser maior que o saldo devedor (${formatarMoeda(saldoRestante)})`); return }
     setErro('')
     setCarregando(true)
-    await onGuardar({ valor: valorNum, data, forma_pagamento: formaPagamento, observacoes: observacoes.trim() || null })
-    setCarregando(false)
+    try {
+      await onGuardar({ valor: valorNum, data, forma_pagamento: formaPagamento, observacoes: observacoes.trim() || null })
+    } catch (excecao) {
+      // Rede caiu, sessão expirou etc. — o pai (financeiro/page.tsx) já trata os erros
+      // esperados do Supabase via toast; isto aqui é só rede de segurança para não
+      // travar o botão "carregando" numa falha totalmente inesperada.
+      setErro(excecao instanceof Error ? excecao.message : 'Erro inesperado ao registar o pagamento.')
+    } finally {
+      setCarregando(false)
+    }
   }
 
   return (

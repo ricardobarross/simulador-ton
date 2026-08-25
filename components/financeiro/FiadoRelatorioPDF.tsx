@@ -1,6 +1,7 @@
 import { Fiado } from '@/types'
 import { formatarMoeda, formatarData } from '@/lib/utils'
 import { valorPago, saldoRestante } from '@/components/financeiro/FiadosList'
+import { ImprimirPortal } from '@/components/ui/ImprimirPortal'
 
 interface FiadoRelatorioPDFProps {
   titulo: string
@@ -14,6 +15,7 @@ export function FiadoRelatorioPDF({ titulo, subtitulo, fiados, nomeEmpresa = 'Su
   const hoje = new Date().toISOString()
 
   return (
+    <ImprimirPortal>
     <div id="pdf-relatorio-fiado" className="imprimir-area bg-white p-8 max-w-3xl mx-auto font-sans text-sm text-gray-800">
       {/* Cabeçalho */}
       <div className="flex items-start justify-between mb-8 pb-6 border-b border-gray-200">
@@ -74,6 +76,7 @@ export function FiadoRelatorioPDF({ titulo, subtitulo, fiados, nomeEmpresa = 'Su
         </>
       )}
     </div>
+    </ImprimirPortal>
   )
 }
 

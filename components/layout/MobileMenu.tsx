@@ -16,6 +16,7 @@ const todosItens = [
   { label: 'Fornecedores',       href: '/fornecedores'   },
   { label: 'Transportadoras',    href: '/transportadoras'},
   { label: 'Contas a pagar',     href: '/contas'         },
+  { label: 'Retalhos',           href: '/retalhos'       },
   { label: 'Simulador TON',      href: '/simulador'      },
   { label: 'Configurações',      href: '/configuracoes'  },
 ]

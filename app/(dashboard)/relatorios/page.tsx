@@ -4,131 +4,121 @@ import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase'
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card'
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner'
-import { GraficoReceita } from '@/components/relatorios/GraficoReceita'
-import { GraficoOrcamentos } from '@/components/relatorios/GraficoOrcamentos'
-import { ExportCSV } from '@/components/relatorios/ExportCSV'
-import { Lancamento, Orcamento, OrdemServico } from '@/types'
-import { formatarMoeda, statusOrcamento, statusOrdem } from '@/lib/utils'
+import { DRE, DadosDRE } from '@/components/relatorios/DRE'
+import { CurvaABC, ItemCurvaABC } from '@/components/relatorios/CurvaABC'
+import { RankingDevedores, ItemDevedor } from '@/components/relatorios/RankingDevedores'
+import { executarOperacao } from '@/lib/api-helpers'
+import { useToast } from '@/lib/toast-context'
 
-function nomeMes(data: Date) {
-  return data.toLocaleDateString('pt-BR', { month: 'short', year: '2-digit' })
+function mesAtualISO() {
+  const d = new Date()
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+}
+
+// O Postgres devolve `numeric` como string via RPC (pra não perder precisão) —
+// convertemos explicitamente pra number aqui, uma vez só, em vez de espalhar
+// `Number(...)` pelos componentes visuais.
+function paraDRE(d: Record<string, unknown>): DadosDRE {
+  return {
+    receita_lancamentos: Number(d.receita_lancamentos),
+    receita_fiados: Number(d.receita_fiados),
+    receita_bruta: Number(d.receita_bruta),
+    custos_variaveis: Number(d.custos_variaveis),
+    margem_contribuicao: Number(d.margem_contribuicao),
+    custos_fixos: Number(d.custos_fixos),
+    lucro_liquido: Number(d.lucro_liquido),
+    margem_lucro_pct: Number(d.margem_lucro_pct),
+  }
+}
+function paraCurvaAbc(linhas: Record<string, unknown>[]): ItemCurvaABC[] {
+  return linhas.map(l => ({ categoria: String(l.categoria), total: Number(l.total), percentual: Number(l.percentual) }))
+}
+function paraDevedores(linhas: Record<string, unknown>[]): ItemDevedor[] {
+  return linhas.map(l => ({
+    cliente_id: String(l.cliente_id),
+    cliente_nome: String(l.cliente_nome),
+    saldo_devedor: Number(l.saldo_devedor),
+    quantidade_fiados: Number(l.quantidade_fiados),
+  }))
 }
 
 export default function RelatoriosPage() {
-  const [lancamentos, setLancamentos] = useState<Lancamento[]>([])
-  const [orcamentos, setOrcamentos] = useState<Orcamento[]>([])
-  const [ordens, setOrdens] = useState<OrdemServico[]>([])
+  const { mostrarErro } = useToast()
+  const [mesSelecionado, setMesSelecionado] = useState(mesAtualISO())
+  const [dre, setDre] = useState<DadosDRE | null>(null)
+  const [curvaAbc, setCurvaAbc] = useState<ItemCurvaABC[]>([])
+  const [devedores, setDevedores] = useState<ItemDevedor[]>([])
   const [carregando, setCarregando] = useState(true)
 
   useEffect(() => {
     async function carregar() {
+      setCarregando(true)
       const supabase = createClient()
-      const seiseMesesAtras = new Date()
-      seiseMesesAtras.setMonth(seiseMesesAtras.getMonth() - 5)
-      seiseMesesAtras.setDate(1)
-      const desde = seiseMesesAtras.toISOString().slice(0, 10)
-
-      const [lancRes, orcRes, ordRes] = await Promise.all([
-        supabase.from('lancamentos').select('*').gte('data', desde).neq('status', 'cancelado'),
-        supabase.from('orcamentos').select('*'),
-        supabase.from('ordens_servico').select('*'),
+      const primeiroDia = `${mesSelecionado}-01`
+      const [dreRes, abcRes, devRes] = await Promise.all([
+        executarOperacao(() => supabase.rpc('calcular_dre_mensal', { p_mes: primeiroDia }).single()),
+        executarOperacao(() => supabase.rpc('curva_abc_servicos', { p_mes: primeiroDia })),
+        executarOperacao(() => supabase.rpc('ranking_devedores', { p_limite: 10 })),
       ])
-      setLancamentos((lancRes.data ?? []) as Lancamento[])
-      setOrcamentos((orcRes.data ?? []) as Orcamento[])
-      setOrdens((ordRes.data ?? []) as OrdemServico[])
+      if (!dreRes.ok) mostrarErro(`Não foi possível calcular o DRE: ${dreRes.erro}`)
+      if (!abcRes.ok) mostrarErro(`Não foi possível calcular a curva ABC: ${abcRes.erro}`)
+      if (!devRes.ok) mostrarErro(`Não foi possível calcular a lista de devedores: ${devRes.erro}`)
+      setDre(dreRes.ok ? paraDRE(dreRes.data as Record<string, unknown>) : null)
+      setCurvaAbc(abcRes.ok ? paraCurvaAbc(abcRes.data as Record<string, unknown>[]) : [])
+      setDevedores(devRes.ok ? paraDevedores(devRes.data as Record<string, unknown>[]) : [])
       setCarregando(false)
     }
     carregar()
-  }, [])
-
-  if (carregando) return <LoadingSpinner texto="A carregar relatórios..." />
-
-  // ─── Receita x despesa por mês (últimos 6 meses) ────────────
-  const meses: { chave: string; label: string }[] = []
-  for (let i = 5; i >= 0; i--) {
-    const d = new Date()
-    d.setDate(1)
-    d.setMonth(d.getMonth() - i)
-    meses.push({ chave: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`, label: nomeMes(d) })
-  }
-  const dadosReceita = meses.map(m => {
-    const doMes = lancamentos.filter(l => l.data.startsWith(m.chave))
-    return {
-      mes: m.label,
-      receita: doMes.filter(l => l.tipo === 'entrada').reduce((s, l) => s + l.valor, 0),
-      despesa: doMes.filter(l => l.tipo === 'saida').reduce((s, l) => s + l.valor, 0),
-    }
-  })
-
-  const totalReceita = lancamentos.filter(l => l.tipo === 'entrada').reduce((s, l) => s + l.valor, 0)
-  const totalDespesa = lancamentos.filter(l => l.tipo === 'saida').reduce((s, l) => s + l.valor, 0)
-
-  // ─── Orçamentos por status ────────────────────────────────
-  const dadosOrcamentos = Object.entries(statusOrcamento).map(([status, info]) => ({
-    status,
-    label: info.label,
-    cor: info.cor as 'gray' | 'blue' | 'green' | 'yellow' | 'orange' | 'red',
-    quantidade: orcamentos.filter(o => o.status === status).length,
-  }))
-
-  const dadosOrdens = Object.entries(statusOrdem).map(([status, info]) => ({
-    status,
-    label: info.label,
-    cor: info.cor as 'gray' | 'blue' | 'green' | 'yellow' | 'orange' | 'red',
-    quantidade: ordens.filter(o => o.status === status).length,
-  }))
+  }, [mesSelecionado]) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="space-y-6">
       <div>
         <h2 className="text-xl font-semibold text-gray-900">Relatórios</h2>
-        <p className="text-sm text-gray-500">Últimos 6 meses</p>
-      </div>
-
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <Card>
-          <p className="text-sm text-gray-500">Receita total (6 meses)</p>
-          <p className="text-2xl font-bold text-green-600 mt-1">{formatarMoeda(totalReceita)}</p>
-        </Card>
-        <Card>
-          <p className="text-sm text-gray-500">Despesa total (6 meses)</p>
-          <p className="text-2xl font-bold text-red-500 mt-1">{formatarMoeda(totalDespesa)}</p>
-        </Card>
+        <p className="text-sm text-gray-500">DRE, rentabilidade por categoria e devedores</p>
       </div>
 
       <Card>
         <CardHeader>
-          <CardTitle>Receitas x Despesas por mês</CardTitle>
-          <ExportCSV
-            nomeArquivo="lancamentos.csv"
-            linhas={lancamentos.map(l => ({ data: l.data, tipo: l.tipo, categoria: l.categoria ?? '', descricao: l.descricao, valor: l.valor, status: l.status }))}
+          <div>
+            <CardTitle>DRE simplificado</CardTitle>
+            <p className="text-sm text-gray-400 mt-0.5">Demonstração do resultado do mês selecionado</p>
+          </div>
+          <input
+            type="month"
+            value={mesSelecionado}
+            onChange={e => setMesSelecionado(e.target.value)}
+            className="rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
         </CardHeader>
-        <GraficoReceita dados={dadosReceita} />
+        {carregando ? (
+          <LoadingSpinner texto="A calcular DRE..." />
+        ) : dre ? (
+          <DRE dados={dre} />
+        ) : (
+          <p className="text-sm text-gray-400 text-center py-8">Não foi possível calcular o DRE deste mês.</p>
+        )}
       </Card>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <Card>
-          <CardHeader>
-            <CardTitle>Orçamentos por estado</CardTitle>
-            <ExportCSV
-              nomeArquivo="orcamentos.csv"
-              linhas={orcamentos.map(o => ({ numero: o.numero, status: o.status, total: o.total, criado_em: o.created_at }))}
-            />
-          </CardHeader>
-          <GraficoOrcamentos dados={dadosOrcamentos} />
-        </Card>
-        <Card>
-          <CardHeader>
-            <CardTitle>Ordens de serviço por estado</CardTitle>
-            <ExportCSV
-              nomeArquivo="ordens_servico.csv"
-              linhas={ordens.map(o => ({ numero: o.numero, status: o.status, total: o.total, aberta_em: o.data_abertura }))}
-            />
-          </CardHeader>
-          <GraficoOrcamentos dados={dadosOrdens} />
-        </Card>
-      </div>
+      <Card>
+        <CardHeader>
+          <div>
+            <CardTitle>Curva ABC de rentabilidade</CardTitle>
+            <p className="text-sm text-gray-400 mt-0.5">Receita por categoria de serviço no mês selecionado</p>
+          </div>
+        </CardHeader>
+        {carregando ? <LoadingSpinner /> : <CurvaABC dados={curvaAbc} />}
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <div>
+            <CardTitle>Lista de devedores</CardTitle>
+            <p className="text-sm text-gray-400 mt-0.5">Clientes com fiado em aberto, do maior pro menor saldo</p>
+          </div>
+        </CardHeader>
+        {carregando ? <LoadingSpinner /> : <RankingDevedores dados={devedores} />}
+      </Card>
     </div>
   )
 }

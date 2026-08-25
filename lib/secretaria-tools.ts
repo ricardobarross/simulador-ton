@@ -1,5 +1,5 @@
 import { createClient } from '@/lib/supabase'
-import { lancarOrdemNoFinanceiro, sincronizarLancamentoOrdem } from '@/lib/financeiro'
+import { registrarPagamentoOrdem } from '@/lib/financeiro'
 
 // ═══════════════════════════════════════════════════════════
 // Ferramentas da secretária IA — schema (formato OpenAI/Groq function-calling)
@@ -74,7 +74,7 @@ export const ferramentasSecretaria = [
     type: 'function',
     function: {
       name: 'criar_ordem_servico',
-      description: 'Cria uma ordem de serviço diretamente (sem passar por orçamento) para um cliente. A O.S. é lançada automaticamente no Financeiro, por isso a forma de pagamento é obrigatória — pergunte sempre antes de chamar esta ferramenta. Se a pessoa disser que o pagamento foi dividido (ex.: "parte em dinheiro e o resto no pix"), pergunte o valor de cada parte e use o campo "pagamentos" em vez de "forma_pagamento" — a soma das partes precisa bater com o total da O.S.',
+      description: 'Cria uma ordem de serviço diretamente (sem passar por orçamento) para um cliente que já autorizou o serviço. NÃO pergunte forma de pagamento aqui — a O.S. entra "aguardando pagamento" e o pagamento só é registrado depois, quando o cliente vier buscar e pagar de fato (aí sim, use registrar_pagamento_os).',
       parameters: {
         type: 'object',
         properties: {
@@ -93,6 +93,21 @@ export const ferramentasSecretaria = [
             },
           },
           desconto: { type: 'number' },
+          observacoes: { type: 'string' },
+        },
+        required: ['cliente_id', 'itens'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'registrar_pagamento_os',
+      description: 'Registra o pagamento de uma ordem de serviço quando o cliente vem buscar e paga de fato — pode ser numa forma diferente da combinada antes, e pode vir dividido entre formas (ex.: metade dinheiro, metade pix). Use buscar_ordens_servico antes para achar o ordem_id e confirmar o total. Cada O.S. só pode ter o pagamento registrado uma vez. Para pagamento em cheque, não use esta ferramenta — oriente a pessoa a usar o botão "Registar pagamento" na tela de Ordens de Serviço, que tem o formulário certo pra anotar os dados do cheque.',
+      parameters: {
+        type: 'object',
+        properties: {
+          ordem_id: { type: 'string' },
           forma_pagamento: { type: 'string', description: 'Use quando o pagamento é numa única forma: Dinheiro, Pix, Débito, Crédito, Transferência ou Fiado' },
           pagamentos: {
             type: 'array',
@@ -106,9 +121,8 @@ export const ferramentasSecretaria = [
               required: ['forma', 'valor'],
             },
           },
-          observacoes: { type: 'string' },
         },
-        required: ['cliente_id', 'itens'],
+        required: ['ordem_id'],
       },
     },
   },
@@ -196,7 +210,7 @@ export const ferramentasSecretaria = [
     type: 'function',
     function: {
       name: 'marcar_ordem_pronta',
-      description: 'Marca uma ordem de serviço como concluída e devolve uma mensagem pronta para avisar o cliente no WhatsApp.',
+      description: 'Marca uma ordem de serviço como concluída e devolve uma mensagem pronta para avisar o cliente no WhatsApp. Isso NÃO registra pagamento — só muda o status do serviço pra "pronto pra retirada". Quando o cliente vier buscar e pagar, use registrar_pagamento_os.',
       parameters: {
         type: 'object',
         properties: { ordem_id: { type: 'string' } },
@@ -248,6 +262,7 @@ export async function executarFerramenta(nome: string, args: Record<string, unkn
         .select('id, nome, telefone')
         .ilike('nome', `%${args.nome}%`)
         .eq('ativo', true)
+        .is('deleted_at', null)
         .limit(10)
       if (error) return { erro: error.message }
       return { clientes: data }
@@ -300,19 +315,8 @@ export async function executarFerramenta(nome: string, args: Record<string, unkn
       const desconto = (args.desconto as number) ?? 0
       const total = subtotal - desconto
 
-      const pagamentosArg = args.pagamentos as { forma: string; valor: number }[] | undefined
-      if (!args.forma_pagamento && !pagamentosArg?.length) {
-        return { erro: 'Forma de pagamento é obrigatória. Pergunte à pessoa antes de criar a O.S.' }
-      }
-      if (pagamentosArg?.length) {
-        const soma = pagamentosArg.reduce((s, p) => s + (Number(p.valor) || 0), 0)
-        if (Math.round((soma - total) * 100) !== 0) {
-          return { erro: `A soma das formas de pagamento (${soma}) não bate com o total da O.S. (${total}). Confirme os valores com a pessoa.` }
-        }
-      }
-      const pagamentosFinal = pagamentosArg?.length ? pagamentosArg : [{ forma: args.forma_pagamento as string, valor: total }]
-      const formaResumo = pagamentosFinal.map(p => p.forma).join(' + ')
-
+      // Sem forma de pagamento aqui — o cliente já autorizou o serviço, o pagamento
+      // só é registrado depois (registrar_pagamento_os), quando ele vier buscar.
       const { data, error } = await supabase
         .from('ordens_servico')
         .insert({
@@ -321,27 +325,55 @@ export async function executarFerramenta(nome: string, args: Record<string, unkn
           subtotal,
           desconto,
           total,
-          forma_pagamento: formaResumo,
-          pagamentos: pagamentosFinal,
           observacoes: (args.observacoes as string) ?? null,
         })
         .select('*, cliente:clientes(nome)')
         .single()
       if (error) return { erro: error.message }
-      await lancarOrdemNoFinanceiro(supabase, {
-        id: data.id,
-        numero: data.numero,
-        total: data.total,
-        forma_pagamento: data.forma_pagamento,
-        pagamentos: data.pagamentos,
-        cliente_id: data.cliente_id,
-        cliente_nome: data.cliente?.nome,
-      })
+
       return {
         ordem_servico: data,
+        aviso: 'Criada como "aguardando pagamento" — nada foi lançado no Financeiro ainda. Quando o cliente vier buscar e pagar, use registrar_pagamento_os.',
+      }
+    }
+
+    case 'registrar_pagamento_os': {
+      const { data: ordem, error: erroOrdem } = await supabase
+        .from('ordens_servico')
+        .select('id, numero, total, cliente:clientes(nome)')
+        .eq('id', args.ordem_id)
+        .is('deleted_at', null)
+        .single()
+      if (erroOrdem || !ordem) return { erro: erroOrdem?.message ?? 'Ordem de serviço não encontrada.' }
+
+      const pagamentosArg = args.pagamentos as { forma: string; valor: number }[] | undefined
+      if (!args.forma_pagamento && !pagamentosArg?.length) {
+        return { erro: 'Preciso saber a forma de pagamento (ou como foi dividido) antes de registrar. Pergunte à pessoa.' }
+      }
+      if (pagamentosArg?.length) {
+        const soma = pagamentosArg.reduce((s, p) => s + (Number(p.valor) || 0), 0)
+        if (Math.round((soma - ordem.total) * 100) !== 0) {
+          return { erro: `A soma dos pagamentos (${soma}) não bate com o total da O.S. (${ordem.total}). Confirme os valores com a pessoa.` }
+        }
+      }
+      const pagamentosFinal = pagamentosArg?.length ? pagamentosArg : [{ forma: args.forma_pagamento as string, valor: ordem.total }]
+
+      if (pagamentosFinal.some(p => p.forma === 'Cheque')) {
+        return { erro: 'Pagamento em cheque precisa dos dados do cheque (número, banco, conta, titular) — não dá pra fazer por aqui. Oriente a pessoa a usar o botão "Registar pagamento" na tela de Ordens de Serviço.' }
+      }
+
+      const resultado = await registrarPagamentoOrdem(supabase, args.ordem_id as string, pagamentosFinal)
+      if (!resultado.ok) return { erro: resultado.erro }
+
+      const cliente = Array.isArray(ordem.cliente) ? ordem.cliente[0] : ordem.cliente
+      return {
+        confirmado: true,
+        ordem_numero: ordem.numero,
+        cliente_nome: cliente?.nome,
+        valor_total: ordem.total,
         aviso: pagamentosFinal.some(p => p.forma === 'Fiado')
-          ? 'Já foi lançada automaticamente no Financeiro; a parte em fiado entrou como conta a receber do cliente.'
-          : 'Já foi lançada automaticamente no Financeiro como pendente.',
+          ? 'A parte em fiado entrou como conta a receber do cliente.'
+          : undefined,
       }
     }
 
@@ -383,6 +415,7 @@ export async function executarFerramenta(nome: string, args: Record<string, unkn
         .from('fiados')
         .select('id, descricao, valor_total, data, status, pagamentos:fiado_pagamentos(valor)')
         .eq('cliente_id', args.cliente_id)
+        .is('deleted_at', null)
         .order('data', { ascending: false })
       if (error) return { erro: error.message }
       const fiados = (data ?? []).map((f) => {
@@ -406,41 +439,31 @@ export async function executarFerramenta(nome: string, args: Record<string, unkn
         .from('fiados')
         .select('*, cliente:clientes(nome)')
         .eq('id', args.fiado_id)
+        .is('deleted_at', null)
         .single()
       if (erroFiado || !fiado) return { erro: erroFiado?.message ?? 'Fiado não encontrado.' }
 
       const dataPagamento = (args.data as string) ?? new Date().toISOString().slice(0, 10)
       const formaPagamento = (args.forma_pagamento as string) ?? 'Dinheiro'
 
-      const { data: lancamento, error: erroLancamento } = await supabase
-        .from('lancamentos')
-        .insert({
-          tipo: 'entrada',
-          categoria: 'Fiado recebido',
-          descricao: `Pagamento de fiado — ${fiado.cliente?.nome ?? ''}`,
-          valor: args.valor,
-          forma_pagamento: formaPagamento,
-          data: dataPagamento,
-          status: 'pago',
+      // Mesma function atômica usada pela tela (registrar_pagamento_fiado_atomico):
+      // lançamento no caixa + baixa no fiado saem numa única transação no banco,
+      // ou nenhum dos dois é gravado.
+      const { error: erroRpc } = await supabase
+        .rpc('registrar_pagamento_fiado_atomico', {
+          p_fiado_id: args.fiado_id,
+          p_valor: args.valor,
+          p_forma_pagamento: formaPagamento,
+          p_data: dataPagamento,
         })
-        .select()
         .single()
-      if (erroLancamento) return { erro: erroLancamento.message }
-
-      const { error: erroPagamento } = await supabase.from('fiado_pagamentos').insert({
-        fiado_id: args.fiado_id,
-        valor: args.valor,
-        data: dataPagamento,
-        forma_pagamento: formaPagamento,
-        lancamento_id: lancamento?.id ?? null,
-      })
-      if (erroPagamento) return { erro: erroPagamento.message }
+      if (erroRpc) return { erro: erroRpc.message }
 
       return { confirmado: true, cliente_nome: fiado.cliente?.nome, valor_recebido: args.valor }
     }
 
     case 'buscar_ordens_servico': {
-      let query = supabase.from('ordens_servico').select('id, numero, status, total, cliente:clientes(nome)')
+      let query = supabase.from('ordens_servico').select('id, numero, status, total, cliente:clientes(nome)').is('deleted_at', null)
       if (args.numero) query = query.ilike('numero', `%${args.numero}%`)
       if (args.status) query = query.eq('status', args.status as string)
       const { data, error } = await query.limit(10)
@@ -464,7 +487,6 @@ export async function executarFerramenta(nome: string, args: Record<string, unkn
         .select('*, cliente:clientes(nome, telefone)')
         .single()
       if (error) return { erro: error.message }
-      await sincronizarLancamentoOrdem(supabase, ordem.id, 'concluida')
       const cliente = Array.isArray(ordem.cliente) ? ordem.cliente[0] : ordem.cliente
       const primeiroNome = cliente?.nome?.split(' ')[0] ?? ''
       const mensagem = `Olá, ${primeiroNome}! Aqui é da Surubim Tornearia. Seu serviço (O.S. ${ordem.numero}) já está pronto para retirada. Qualquer dúvida, estamos à disposição!`
@@ -482,13 +504,16 @@ export async function executarFerramenta(nome: string, args: Record<string, unkn
       const hoje = new Date().toISOString().slice(0, 10)
       const { data: lancs, error: erroLancs } = await supabase
         .from('lancamentos')
-        .select('tipo, valor, status')
+        .select('tipo, valor, status, destino')
         .eq('data', hoje)
+        .is('deleted_at', null)
       if (erroLancs) return { erro: erroLancs.message }
 
-      // Só o que já foi efetivamente pago/recebido entra na conta do caixa físico.
-      const totalEntradas = (lancs ?? []).filter(l => l.tipo === 'entrada' && l.status === 'pago').reduce((s, l) => s + l.valor, 0)
-      const totalSaidas = (lancs ?? []).filter(l => l.tipo === 'saida' && l.status === 'pago').reduce((s, l) => s + l.valor, 0)
+      // "Esperado" é conferência de DINHEIRO FÍSICO na gaveta — só entram aqui os
+      // lançamentos pagos com destino='caixa' (Dinheiro). Pix/cartão/transferência
+      // vão pro banco, não pela gaveta.
+      const totalEntradas = (lancs ?? []).filter(l => l.tipo === 'entrada' && l.status === 'pago' && l.destino === 'caixa').reduce((s, l) => s + l.valor, 0)
+      const totalSaidas = (lancs ?? []).filter(l => l.tipo === 'saida' && l.status === 'pago' && l.destino === 'caixa').reduce((s, l) => s + l.valor, 0)
       const totalPendente = (lancs ?? []).filter(l => l.tipo === 'entrada' && l.status === 'pendente').reduce((s, l) => s + l.valor, 0)
 
       const valorAbertura = args.valor_abertura as number

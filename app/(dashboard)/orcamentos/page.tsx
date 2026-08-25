@@ -12,7 +12,10 @@ import { OrcamentoForm } from '@/components/orcamentos/OrcamentoForm'
 import { OrcamentoPDF, imprimirOrcamento } from '@/components/orcamentos/OrcamentoPDF'
 import { FormaPagamentoSplit } from '@/components/financeiro/FormaPagamentoSplit'
 import { lancarOrdemNoFinanceiro } from '@/lib/financeiro'
+import { executarOperacao } from '@/lib/api-helpers'
+import { useToast } from '@/lib/toast-context'
 import { formatarMoeda } from '@/lib/utils'
+import { abrirWhatsapp, mensagemResumoOrcamento } from '@/lib/whatsapp'
 
 export default function OrcamentosPage() {
   return (
@@ -24,6 +27,7 @@ export default function OrcamentosPage() {
 
 function OrcamentosPageInner() {
   const searchParams = useSearchParams()
+  const { mostrarErro, mostrarSucesso } = useToast()
   const [orcamentos, setOrcamentos] = useState<Orcamento[]>([])
   const [carregando, setCarregando] = useState(true)
   const [modalForm, setModalForm] = useState(false)
@@ -40,24 +44,34 @@ function OrcamentosPageInner() {
 
   async function carregar() {
     const supabase = createClient()
-    const { data } = await supabase
-      .from('orcamentos')
-      .select('*, cliente:clientes(id, nome, telefone)')
-      .order('created_at', { ascending: false })
-    setOrcamentos((data as Orcamento[]) ?? [])
+    const resultado = await executarOperacao(() =>
+      supabase
+        .from('orcamentos')
+        .select('*, cliente:clientes(id, nome, telefone)')
+        .order('created_at', { ascending: false })
+    )
+    if (!resultado.ok) {
+      mostrarErro(`Não foi possível carregar os orçamentos: ${resultado.erro}`)
+      setCarregando(false)
+      return
+    }
+    setOrcamentos((resultado.data as Orcamento[]) ?? [])
     setCarregando(false)
   }
 
-  useEffect(() => { carregar() }, [])
+  useEffect(() => { carregar() }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   async function handleGuardar(dados: Partial<Orcamento>) {
     const supabase = createClient()
-    if (editando?.id) {
-      await supabase.from('orcamentos').update(dados).eq('id', editando.id)
-    } else {
-      // "numero" é gerado automaticamente pelo banco (ORC-0001, ORC-0002...)
-      await supabase.from('orcamentos').insert(dados)
+    const resultado = editando?.id
+      ? await executarOperacao(() => supabase.from('orcamentos').update(dados).eq('id', editando.id).select().single())
+      : await executarOperacao(() => supabase.from('orcamentos').insert(dados).select().single()) // "numero" é gerado automaticamente pelo banco (ORC-0001, ORC-0002...)
+
+    if (!resultado.ok) {
+      mostrarErro(`Não foi possível guardar o orçamento: ${resultado.erro}`)
+      return // modal continua aberto — nada foi salvo
     }
+    mostrarSucesso(editando?.id ? 'Orçamento atualizado.' : 'Orçamento criado.')
     setModalForm(false)
     setEditando(null)
     await carregar()
@@ -66,7 +80,12 @@ function OrcamentosPageInner() {
   async function handleExcluir(id: string) {
     if (!confirm('Excluir este orçamento?')) return
     const supabase = createClient()
-    await supabase.from('orcamentos').delete().eq('id', id)
+    const resultado = await executarOperacao(() => supabase.from('orcamentos').delete().eq('id', id).select().single())
+    if (!resultado.ok) {
+      mostrarErro(`Não foi possível excluir: ${resultado.erro}`)
+      return
+    }
+    mostrarSucesso('Orçamento excluído.')
     await carregar()
   }
 
@@ -96,42 +115,71 @@ function OrcamentosPageInner() {
 
     const formaResumo = pagamentosFinal.map(p => p.forma).join(' + ')
     setConvertendo(true)
-    const supabase = createClient()
-    // "numero" é gerado automaticamente pelo banco (OS-0001, OS-0002...)
-    const { data: novaOS } = await supabase
-      .from('ordens_servico')
-      .insert({
-        cliente_id:      orcamento.cliente_id,
-        orcamento_id:    orcamento.id,
-        status:          'aberta',
-        itens:           orcamento.itens,
-        subtotal:        orcamento.subtotal,
-        desconto:        orcamento.desconto,
-        total:           orcamento.total,
-        forma_pagamento: formaResumo,
-        pagamentos:      pagamentosFinal,
-      })
-      .select('*, cliente:clientes(nome)')
-      .single()
+    try {
+      const supabase = createClient()
+      // "numero" é gerado automaticamente pelo banco (OS-0001, OS-0002...)
+      const inserir = await executarOperacao(() =>
+        supabase
+          .from('ordens_servico')
+          .insert({
+            cliente_id:      orcamento.cliente_id,
+            orcamento_id:    orcamento.id,
+            status:          'aberta',
+            itens:           orcamento.itens,
+            subtotal:        orcamento.subtotal,
+            desconto:        orcamento.desconto,
+            total:           orcamento.total,
+            forma_pagamento: formaResumo,
+            pagamentos:      pagamentosFinal,
+          })
+          .select('*, cliente:clientes(nome)')
+          .single()
+      )
 
-    if (novaOS) {
-      await lancarOrdemNoFinanceiro(supabase, {
+      if (!inserir.ok) {
+        setErroConversao(`Não foi possível criar a O.S.: ${inserir.erro}`)
+        return // modal continua aberto — nada foi salvo, orçamento continua como estava
+      }
+
+      const novaOS = inserir.data
+      const lancamento = await lancarOrdemNoFinanceiro(supabase, {
         id: novaOS.id,
-        numero: novaOS.numero,
         total: novaOS.total,
         forma_pagamento: novaOS.forma_pagamento,
         pagamentos: novaOS.pagamentos,
-        cliente_id: novaOS.cliente_id,
-        cliente_nome: novaOS.cliente?.nome,
       })
-    }
 
-    await supabase.from('orcamentos').update({ status: 'aprovado' }).eq('id', orcamento.id)
-    setConvertendo(false)
-    setModalConverter(false)
-    setOrcamentoConvertendo(null)
-    await carregar()
-    alert('Ordem de Serviço criada e lançada no Financeiro com sucesso!')
+      if (!lancamento.ok) {
+        // A O.S. já existe (com número gerado), mas nada foi lançado no Financeiro —
+        // a function do banco garante que essa parte é tudo-ou-nada. Avisamos claramente
+        // em vez de fingir sucesso, e NÃO marcamos o orçamento como aprovado ainda.
+        mostrarErro(`A O.S. ${novaOS.numero} foi criada, mas o lançamento no Financeiro falhou: ${lancamento.erro}. Abra a O.S. em Ordens de Serviço e tente novamente.`)
+        setModalConverter(false)
+        setOrcamentoConvertendo(null)
+        await carregar()
+        return
+      }
+
+      const aprovar = await executarOperacao(() =>
+        supabase.from('orcamentos').update({ status: 'aprovado' }).eq('id', orcamento.id).select().single()
+      )
+      if (!aprovar.ok) {
+        mostrarErro(`A O.S. ${novaOS.numero} foi criada e lançada, mas não foi possível marcar o orçamento como aprovado: ${aprovar.erro}`)
+      } else {
+        mostrarSucesso(`Ordem de Serviço ${novaOS.numero} criada e lançada no Financeiro com sucesso!`)
+      }
+
+      setModalConverter(false)
+      setOrcamentoConvertendo(null)
+      await carregar()
+    } finally {
+      setConvertendo(false)
+    }
+  }
+
+  function enviarWhatsapp(orcamento: Orcamento) {
+    const enviado = abrirWhatsapp(orcamento.cliente?.telefone, mensagemResumoOrcamento(orcamento))
+    if (!enviado) mostrarErro('Este cliente não tem telefone cadastrado.')
   }
 
   function abrirPDF(orcamento: Orcamento) {
@@ -205,6 +253,7 @@ function OrcamentosPageInner() {
               onExcluir={() => handleExcluir(o.id)}
               onPDF={() => abrirPDF(o)}
               onConverterOS={() => abrirConversao(o)}
+              onEnviarWhatsapp={() => enviarWhatsapp(o)}
             />
           ))}
         </div>

@@ -18,20 +18,31 @@ body {
   font-family: Arial, Helvetica, sans-serif;
 }
 
-/* Impressão / "Guardar como PDF": mostra só a área marcada como .imprimir-area,
-   escondendo sidebar, menus e o resto da interface. */
+/* #area-impressao é o alvo do ImprimirPortal (components/ui/ImprimirPortal.tsx):
+   fica escondido na tela normal e só aparece na hora de imprimir. */
+#area-impressao {
+  display: none;
+}
+
+/* Impressão / "Guardar como PDF": esconde TUDO no <body> exceto o portal de
+   impressão. Diferente de visibility:hidden, o display:none tira o elemento
+   do fluxo do documento — ou seja, nada (menu lateral, cards da página,
+   modal) reserva espaço em branco antes do conteúdo. Como #area-impressao é
+   filho direto do <body> (via portal), ele começa exatamente no topo da
+   página 1 e pagina normalmente, sem cortar nada. */
 @media print {
-  body * {
-    visibility: hidden;
+  body > *:not(#area-impressao) {
+    display: none !important;
   }
-  .imprimir-area,
-  .imprimir-area * {
-    visibility: visible;
+  #area-impressao {
+    display: block !important;
   }
-  .imprimir-area {
-    position: absolute;
-    left: 0;
-    top: 0;
+  #area-impressao .imprimir-area {
     width: 100%;
+    margin: 0;
+  }
+
+  @page {
+    margin: 1cm;
   }
 }

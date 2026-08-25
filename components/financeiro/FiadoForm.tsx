@@ -7,8 +7,14 @@ import { Input } from '@/components/ui/Input'
 import { Button } from '@/components/ui/Button'
 
 interface FiadoFormProps {
-  onGuardar: (dados: { cliente_id: string; descricao: string; valor_total: number; data: string; observacoes: string | null }) => Promise<void>
+  onGuardar: (dados: { cliente_id: string; descricao: string; valor_total: number; data: string; data_vencimento: string | null; observacoes: string | null }) => Promise<void>
   onCancelar: () => void
+}
+
+function em30Dias(dataBase: string): string {
+  const d = new Date(`${dataBase}T00:00:00`)
+  d.setDate(d.getDate() + 30)
+  return d.toISOString().slice(0, 10)
 }
 
 export function FiadoForm({ onGuardar, onCancelar }: FiadoFormProps) {
@@ -17,6 +23,7 @@ export function FiadoForm({ onGuardar, onCancelar }: FiadoFormProps) {
   const [descricao, setDescricao] = useState('')
   const [valorTotal, setValorTotal] = useState('')
   const [data, setData] = useState(new Date().toISOString().slice(0, 10))
+  const [dataVencimento, setDataVencimento] = useState(em30Dias(new Date().toISOString().slice(0, 10)))
   const [observacoes, setObservacoes] = useState('')
   const [carregando, setCarregando] = useState(false)
   const [erros, setErros] = useState<Record<string, string>>({})
@@ -24,7 +31,7 @@ export function FiadoForm({ onGuardar, onCancelar }: FiadoFormProps) {
   useEffect(() => {
     async function carregarClientes() {
       const supabase = createClient()
-      const { data } = await supabase.from('clientes').select('id, nome').eq('ativo', true).order('nome')
+      const { data } = await supabase.from('clientes').select('id, nome').eq('ativo', true).is('deleted_at', null).order('nome')
       setClientes(data ?? [])
     }
     carregarClientes()
@@ -47,6 +54,7 @@ export function FiadoForm({ onGuardar, onCancelar }: FiadoFormProps) {
       descricao: descricao.trim(),
       valor_total: parseFloat(valorTotal),
       data,
+      data_vencimento: dataVencimento || null,
       observacoes: observacoes.trim() || null,
     })
     setCarregando(false)
@@ -87,6 +95,14 @@ export function FiadoForm({ onGuardar, onCancelar }: FiadoFormProps) {
         />
         <Input label="Data" type="date" value={data} onChange={e => setData(e.target.value)} />
       </div>
+
+      <Input
+        label="Vencimento (opcional)"
+        type="date"
+        value={dataVencimento}
+        onChange={e => setDataVencimento(e.target.value)}
+      />
+      <p className="text-xs text-gray-400 -mt-2">Sugerimos 30 dias após a data do fiado. Usado na régua de cobrança.</p>
 
       <div className="flex flex-col gap-1">
         <label className="text-sm font-medium text-gray-700">Observações</label>

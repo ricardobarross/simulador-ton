@@ -1,5 +1,6 @@
 import { Orcamento } from '@/types'
 import { formatarMoeda, formatarData } from '@/lib/utils'
+import { ImprimirPortal } from '@/components/ui/ImprimirPortal'
 
 interface OrcamentoPDFProps {
   orcamento: Orcamento
@@ -8,6 +9,7 @@ interface OrcamentoPDFProps {
 
 export function OrcamentoPDF({ orcamento, nomeEmpresa = 'Surubim Tornearia' }: OrcamentoPDFProps) {
   return (
+    <ImprimirPortal>
     <div id="pdf-orcamento" className="imprimir-area bg-white p-8 max-w-3xl mx-auto font-sans text-sm text-gray-800">
       {/* Cabeçalho */}
       <div className="flex items-start justify-between mb-8 pb-6 border-b border-gray-200">
@@ -85,6 +87,7 @@ export function OrcamentoPDF({ orcamento, nomeEmpresa = 'Surubim Tornearia' }: O
         )}
       </div>
     </div>
+    </ImprimirPortal>
   )
 }
 

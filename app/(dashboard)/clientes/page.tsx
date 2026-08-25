@@ -10,8 +10,11 @@ import { Modal } from '@/components/ui/Modal'
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner'
 import { ClientesList } from '@/components/clientes/ClientesList'
 import { ClienteForm } from '@/components/clientes/ClienteForm'
+import { executarOperacao } from '@/lib/api-helpers'
+import { useToast } from '@/lib/toast-context'
 
 export default function ClientesPage() {
+  const { mostrarErro, mostrarSucesso } = useToast()
   const [clientes, setClientes] = useState<Cliente[]>([])
   const [filtro, setFiltro] = useState('')
   const [carregando, setCarregando] = useState(true)
@@ -20,23 +23,31 @@ export default function ClientesPage() {
 
   async function carregar() {
     const supabase = createClient()
-    const { data } = await supabase
-      .from('clientes')
-      .select('*')
-      .order('nome')
-    setClientes(data ?? [])
+    const resultado = await executarOperacao(() =>
+      supabase.from('clientes').select('*').is('deleted_at', null).order('nome')
+    )
+    if (!resultado.ok) {
+      mostrarErro(`Não foi possível carregar os clientes: ${resultado.erro}`)
+      setCarregando(false)
+      return
+    }
+    setClientes(resultado.data ?? [])
     setCarregando(false)
   }
 
-  useEffect(() => { carregar() }, [])
+  useEffect(() => { carregar() }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   async function handleGuardar(dados: Partial<Cliente>) {
     const supabase = createClient()
-    if (clienteEditando?.id) {
-      await supabase.from('clientes').update(dados).eq('id', clienteEditando.id)
-    } else {
-      await supabase.from('clientes').insert(dados)
+    const resultado = clienteEditando?.id
+      ? await executarOperacao(() => supabase.from('clientes').update(dados).eq('id', clienteEditando.id).select().single())
+      : await executarOperacao(() => supabase.from('clientes').insert(dados).select().single())
+
+    if (!resultado.ok) {
+      mostrarErro(`Não foi possível guardar o cliente: ${resultado.erro}`)
+      return // modal continua aberto — nada foi salvo
     }
+    mostrarSucesso(clienteEditando?.id ? 'Cliente atualizado.' : 'Cliente cadastrado.')
     setModalAberto(false)
     setClienteEditando(null)
     await carregar()
@@ -45,7 +56,16 @@ export default function ClientesPage() {
   async function handleExcluir(id: string) {
     if (!confirm('Tens a certeza que queres excluir este cliente?')) return
     const supabase = createClient()
-    await supabase.from('clientes').delete().eq('id', id)
+    // Soft delete: o banco recusa DELETE físico e bloqueia esta exclusão se o
+    // cliente ainda tiver fiado em aberto (dívida ativa não pode "sumir").
+    const resultado = await executarOperacao(() =>
+      supabase.from('clientes').update({ deleted_at: new Date().toISOString() }).eq('id', id).select().single()
+    )
+    if (!resultado.ok) {
+      mostrarErro(`Não foi possível excluir: ${resultado.erro}`)
+      return
+    }
+    mostrarSucesso('Cliente excluído.')
     await carregar()
   }
 

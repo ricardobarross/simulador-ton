@@ -19,10 +19,10 @@ export default function DashboardPage() {
       const inicioMes = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0, 10)
 
       const [clientes, orcamentos, ordens, lancamentos] = await Promise.all([
-        supabase.from('clientes').select('id', { count: 'exact' }).eq('ativo', true),
+        supabase.from('clientes').select('id', { count: 'exact' }).eq('ativo', true).is('deleted_at', null),
         supabase.from('orcamentos').select('id', { count: 'exact' }).in('status', ['rascunho', 'enviado']),
-        supabase.from('ordens_servico').select('id', { count: 'exact' }).in('status', ['aberta', 'em_andamento']),
-        supabase.from('lancamentos').select('tipo, valor').eq('status', 'pago').gte('data', inicioMes),
+        supabase.from('ordens_servico').select('id', { count: 'exact' }).in('status', ['aberta', 'em_andamento']).is('deleted_at', null),
+        supabase.from('lancamentos').select('tipo, valor').eq('status', 'pago').gte('data', inicioMes).is('deleted_at', null),
       ])
 
       const receitas = lancamentos.data?.filter(l => l.tipo === 'entrada').reduce((s, l) => s + l.valor, 0) ?? 0

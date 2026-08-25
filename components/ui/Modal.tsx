@@ -31,6 +31,10 @@ export function Modal({ aberto, onFechar, titulo, children, largura = 'md' }: Mo
   }
 
   return (
+    // Nota: o modal em si nunca aparece impresso — quem imprime é o
+    // ImprimirPortal (ver components/ui/ImprimirPortal.tsx), que manda uma
+    // cópia do conteúdo pra fora dessa árvore, direto pro <body>. Por isso o
+    // modal não precisa de nenhum ajuste especial pra impressão aqui.
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div
         className="absolute inset-0 bg-black/50"

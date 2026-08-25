@@ -1,12 +1,14 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { Orcamento, ItemOrcamento, Cliente, Servico } from '@/types'
+import { Orcamento, ItemOrcamento, Cliente, Servico, Anexo } from '@/types'
 import { Input } from '@/components/ui/Input'
 import { Button } from '@/components/ui/Button'
 import { SearchableSelect } from '@/components/ui/SearchableSelect'
+import { UploadAnexos } from '@/components/ui/UploadAnexos'
 import { createClient } from '@/lib/supabase'
 import { formatarMoeda } from '@/lib/utils'
+import { verificarFiadoVencidoCliente, AlertaFiadoCliente } from '@/lib/cobranca'
 
 interface OrcamentoFormProps {
   inicial?: Partial<Orcamento>
@@ -34,14 +36,17 @@ export function OrcamentoForm({ inicial, onGuardar, onCancelar }: OrcamentoFormP
   const [itens, setItens] = useState<ItemOrcamento[]>(
     inicial?.itens?.length ? inicial.itens : [itemVazio()]
   )
+  const [anexos, setAnexos] = useState<Anexo[]>(inicial?.anexos ?? [])
+  const [pastaAnexos] = useState(() => inicial?.id ?? crypto.randomUUID())
   const [carregando, setCarregando] = useState(false)
   const [erros, setErros] = useState<Record<string, string>>({})
+  const [alertaFiado, setAlertaFiado] = useState<AlertaFiadoCliente | null>(null)
 
   useEffect(() => {
     async function carregarDados() {
       const supabase = createClient()
       const [{ data: cli }, { data: srv }] = await Promise.all([
-        supabase.from('clientes').select('id, nome').eq('ativo', true).order('nome'),
+        supabase.from('clientes').select('id, nome').eq('ativo', true).is('deleted_at', null).order('nome'),
         supabase.from('servicos').select('id, nome, categoria, preco_base').eq('ativo', true).order('categoria').order('nome'),
       ])
       setClientes(cli ?? [])
@@ -49,6 +54,16 @@ export function OrcamentoForm({ inicial, onGuardar, onCancelar }: OrcamentoFormP
     }
     carregarDados()
   }, [])
+
+  useEffect(() => {
+    if (!clienteId) { setAlertaFiado(null); return }
+    let cancelado = false
+    const supabase = createClient()
+    verificarFiadoVencidoCliente(supabase, clienteId).then(alerta => {
+      if (!cancelado) setAlertaFiado(alerta)
+    })
+    return () => { cancelado = true }
+  }, [clienteId])
 
   function atualizarItem(index: number, campo: keyof ItemOrcamento, valor: string | number) {
     setItens(prev => prev.map((item, i) => {
@@ -113,6 +128,7 @@ export function OrcamentoForm({ inicial, onGuardar, onCancelar }: OrcamentoFormP
       total,
       validade_dias: validadeDias,
       observacoes,
+      anexos,
     })
     setCarregando(false)
   }
@@ -130,6 +146,14 @@ export function OrcamentoForm({ inicial, onGuardar, onCancelar }: OrcamentoFormP
             options={clientes.map(c => ({ value: c.id, label: c.nome }))}
           />
           {erros.cliente && <p className="text-xs text-red-600">{erros.cliente}</p>}
+          {alertaFiado && (
+            <p className="flex items-center gap-1.5 text-xs font-medium text-red-600 bg-red-50 border border-red-200 rounded-lg px-2.5 py-1.5 mt-1">
+              <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
+              </svg>
+              Cliente com {alertaFiado.quantidadeVencidos} fiado(s) vencido(s) — {formatarMoeda(alertaFiado.totalVencido)} em atraso
+            </p>
+          )}
         </div>
 
         <div className="flex flex-col gap-1">
@@ -289,6 +313,9 @@ export function OrcamentoForm({ inicial, onGuardar, onCancelar }: OrcamentoFormP
           />
         </div>
       </div>
+
+      {/* Anexos: fotos da peça e desenhos técnicos */}
+      <UploadAnexos anexos={anexos} onChange={setAnexos} pasta={`orcamentos/${pastaAnexos}`} />
 
       {/* Acções */}
       <div className="flex justify-end gap-3 pt-2">

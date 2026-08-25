@@ -1,5 +1,6 @@
 'use client'
 
+import Link from 'next/link'
 import { Cliente } from '@/types'
 import { Table, TableHead, TableBody, Th, Td, TableRow } from '@/components/ui/Table'
 import { Badge } from '@/components/ui/Badge'
@@ -39,7 +40,9 @@ export function ClientesList({ clientes, onEditar, onExcluir }: ClientesListProp
         {clientes.map((cliente) => (
           <TableRow key={cliente.id}>
             <Td>
-              <span className="font-medium text-gray-900">{cliente.nome}</span>
+              <Link href={`/clientes/${cliente.id}`} className="font-medium text-gray-900 hover:text-blue-600 hover:underline">
+                {cliente.nome}
+              </Link>
             </Td>
             <Td>{cliente.telefone ? formatarTelefone(cliente.telefone) : '—'}</Td>
             <Td>
@@ -49,6 +52,9 @@ export function ClientesList({ clientes, onEditar, onExcluir }: ClientesListProp
             </Td>
             <Td className="text-right">
               <div className="flex items-center justify-end gap-2">
+                <Link href={`/clientes/${cliente.id}`}>
+                  <Button variante="ghost" tamanho="sm">Ver / Extrato</Button>
+                </Link>
                 <Button variante="ghost" tamanho="sm" onClick={() => onEditar(cliente)}>
                   Editar
                 </Button>

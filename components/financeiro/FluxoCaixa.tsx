@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { FechamentoCaixa } from '@/types'
+import { FechamentoCaixa, ResumoFechamentoDia } from '@/types'
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card'
 import { Input } from '@/components/ui/Input'
 import { Button } from '@/components/ui/Button'
@@ -11,6 +11,7 @@ import { formatarMoeda } from '@/lib/utils'
 interface FluxoCaixaProps {
   data: string
   fechamento: FechamentoCaixa | null
+  resumoDia: ResumoFechamentoDia | null
   totalEntradas: number
   totalSaidas: number
   totalPendente?: number
@@ -19,9 +20,41 @@ interface FluxoCaixaProps {
   onFechar: (dados: { valor_abertura: number; valor_contado: number; observacoes: string }) => Promise<void>
 }
 
+function ResumoDetalhado({ dinheiro, pix, cartao, outros, abatesFiado, fiadoNovo }: {
+  dinheiro: number; pix: number; cartao: number; outros: number; abatesFiado: number; fiadoNovo: number
+}) {
+  return (
+    <div className="space-y-2">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
+        <div><p className="text-gray-400 text-xs">Dinheiro</p><p className="font-medium">{formatarMoeda(dinheiro)}</p></div>
+        <div><p className="text-gray-400 text-xs">Pix</p><p className="font-medium">{formatarMoeda(pix)}</p></div>
+        <div><p className="text-gray-400 text-xs">Cartão</p><p className="font-medium">{formatarMoeda(cartao)}</p></div>
+        {outros > 0 && <div><p className="text-gray-400 text-xs">Outros</p><p className="font-medium">{formatarMoeda(outros)}</p></div>}
+      </div>
+      {(abatesFiado > 0 || fiadoNovo > 0) && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm pt-2 border-t border-gray-100">
+          {abatesFiado > 0 && (
+            <div>
+              <p className="text-gray-400 text-xs">Abates de fiado antigo recebidos hoje</p>
+              <p className="font-medium text-blue-600">{formatarMoeda(abatesFiado)}</p>
+            </div>
+          )}
+          {fiadoNovo > 0 && (
+            <div>
+              <p className="text-gray-400 text-xs">Vendido a prazo hoje (fiado novo)</p>
+              <p className="font-medium text-orange-600">{formatarMoeda(fiadoNovo)}</p>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 export function FluxoCaixa({
   data,
   fechamento,
+  resumoDia,
   totalEntradas,
   totalSaidas,
   totalPendente = 0,
@@ -78,6 +111,16 @@ export function FluxoCaixa({
               </p>
             </div>
           </div>
+          <div className="pt-3 border-t border-gray-100">
+            <ResumoDetalhado
+              dinheiro={fechamento.total_dinheiro}
+              pix={fechamento.total_pix}
+              cartao={fechamento.total_cartao}
+              outros={fechamento.total_outros}
+              abatesFiado={fechamento.total_abates_fiado}
+              fiadoNovo={fechamento.total_fiado_novo}
+            />
+          </div>
           {fechamento.observacoes && <p className="text-xs text-gray-500">{fechamento.observacoes}</p>}
           {ehProprietario && (
             <Button variante="ghost" tamanho="sm" onClick={() => setEditando(true)}>Editar fechamento</Button>
@@ -103,6 +146,19 @@ export function FluxoCaixa({
               <p className={`font-medium ${diferenca === 0 ? 'text-gray-900' : diferenca > 0 ? 'text-green-600' : 'text-red-500'}`}>{formatarMoeda(diferenca)}</p>
             </div>
           </div>
+          {resumoDia && (
+            <div className="bg-gray-50 rounded-lg p-3">
+              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Detalhamento do dia</p>
+              <ResumoDetalhado
+                dinheiro={resumoDia.total_dinheiro}
+                pix={resumoDia.total_pix}
+                cartao={resumoDia.total_cartao}
+                outros={resumoDia.total_outros}
+                abatesFiado={resumoDia.total_abates_fiado}
+                fiadoNovo={resumoDia.total_fiado_novo}
+              />
+            </div>
+          )}
           {totalPendente > 0 && (
             <p className="text-xs text-yellow-700 bg-yellow-50 px-3 py-2 rounded-lg">
               Tem {formatarMoeda(totalPendente)} em fiado/vendas ainda não recebidas hoje — isso já ficou de fora da conta acima, não precisa descontar na mão.
