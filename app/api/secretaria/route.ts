@@ -66,7 +66,9 @@ export async function POST(req: NextRequest) {
       .in('chave', ['groq_api_key', 'groq_model'])
 
     const groqApiKey = configs?.find(c => c.chave === 'groq_api_key')?.valor
-    const groqModel = configs?.find(c => c.chave === 'groq_model')?.valor || 'llama-3.3-70b-versatile'
+    // llama-3.3-70b-versatile foi desativado pela Groq em 16/08/2026 — trocamos
+    // pro substituto oficial recomendado por eles (openai/gpt-oss-120b).
+    const groqModel = configs?.find(c => c.chave === 'groq_model')?.valor || 'openai/gpt-oss-120b'
 
     if (!groqApiKey) {
       return NextResponse.json(
