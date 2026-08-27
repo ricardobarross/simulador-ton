@@ -35,8 +35,8 @@ export function PagamentoOrdemForm({ ordem, ehProprietario, onGuardar, onCancela
       if (p.valor <= 0) continue
       if (p.forma === 'Cheque') {
         const c = p.cheque
-        if (!c?.numero_cheque?.trim() || !c?.banco?.trim() || !c?.numero_conta?.trim() || !c?.nome_titular?.trim()) {
-          setErro('Preenche número do cheque, banco, número da conta e titular.')
+        if (!c?.numero_cheque?.trim() || !c?.banco?.trim() || !c?.agencia?.trim() || !c?.numero_conta?.trim() || !c?.nome_titular?.trim()) {
+          setErro('Preenche número do cheque, banco, agência, número da conta e titular.')
           return false
         }
       }

@@ -14,6 +14,8 @@ interface ClienteFormProps {
 export function ClienteForm({ inicial, onGuardar, onCancelar }: ClienteFormProps) {
   const [nome, setNome] = useState(inicial?.nome ?? '')
   const [telefone, setTelefone] = useState(inicial?.telefone ?? '')
+  const [cpfCnpj, setCpfCnpj] = useState(inicial?.cpf_cnpj ?? '')
+  const [endereco, setEndereco] = useState(inicial?.endereco ?? '')
   const [ativo, setAtivo] = useState(inicial?.ativo ?? true)
   const [carregando, setCarregando] = useState(false)
   const [erro, setErro] = useState('')
@@ -25,7 +27,13 @@ export function ClienteForm({ inicial, onGuardar, onCancelar }: ClienteFormProps
     }
     setErro('')
     setCarregando(true)
-    await onGuardar({ nome: nome.trim(), telefone: telefone.trim() || null, ativo })
+    await onGuardar({
+      nome: nome.trim(),
+      telefone: telefone.trim() || null,
+      cpf_cnpj: cpfCnpj.trim() || null,
+      endereco: endereco.trim() || null,
+      ativo,
+    })
     setCarregando(false)
   }
 
@@ -38,11 +46,26 @@ export function ClienteForm({ inicial, onGuardar, onCancelar }: ClienteFormProps
         erro={erro}
         placeholder="Nome do cliente"
       />
+      <div className="grid grid-cols-2 gap-4">
+        <Input
+          label="Telefone"
+          value={telefone ?? ''}
+          onChange={e => setTelefone(e.target.value)}
+          placeholder="(00) 00000-0000"
+        />
+        <Input
+          label="CPF / CNPJ"
+          value={cpfCnpj ?? ''}
+          onChange={e => setCpfCnpj(e.target.value)}
+          placeholder="000.000.000-00"
+        />
+      </div>
+
       <Input
-        label="Telefone"
-        value={telefone ?? ''}
-        onChange={e => setTelefone(e.target.value)}
-        placeholder="(00) 00000-0000"
+        label="Endereço"
+        value={endereco ?? ''}
+        onChange={e => setEndereco(e.target.value)}
+        placeholder="Rua, número, bairro, cidade — UF"
       />
 
       <div className="flex items-center gap-2">

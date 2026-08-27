@@ -11,6 +11,8 @@ import { Table, TableHead, TableBody, Th, Td, TableRow } from '@/components/ui/T
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner'
 import { Fornecedor, Transportadora } from '@/types'
 import { formatarTelefone } from '@/lib/utils'
+import { executarOperacao } from '@/lib/api-helpers'
+import { useToast } from '@/lib/toast-context'
 
 type Registo = Fornecedor | Transportadora
 
@@ -83,24 +85,33 @@ export function CadastroContato({ tabela, titulo, tituloSingular }: CadastroCont
   const [busca, setBusca] = useState('')
   const [modalAberto, setModalAberto] = useState(false)
   const [editando, setEditando] = useState<Registo | undefined>()
+  const { mostrarErro, mostrarSucesso } = useToast()
 
   async function carregar() {
     setCarregando(true)
     const supabase = createClient()
-    const { data } = await supabase.from(tabela).select('*').order('nome')
-    setRegistos((data ?? []) as Registo[])
+    const resultado = await executarOperacao(() => supabase.from(tabela).select('*').order('nome'))
+    if (!resultado.ok) {
+      mostrarErro(`Não foi possível carregar ${titulo.toLowerCase()}: ${resultado.erro}`)
+      setCarregando(false)
+      return
+    }
+    setRegistos((resultado.data ?? []) as Registo[])
     setCarregando(false)
   }
 
-  useEffect(() => { carregar() }, [tabela])
+  useEffect(() => { carregar() }, [tabela]) // eslint-disable-line react-hooks/exhaustive-deps
 
   async function guardar(dados: Partial<Registo>) {
     const supabase = createClient()
-    if (editando) {
-      await supabase.from(tabela).update(dados).eq('id', editando.id)
-    } else {
-      await supabase.from(tabela).insert(dados)
+    const resultado = editando
+      ? await executarOperacao(() => supabase.from(tabela).update(dados).eq('id', editando.id).select().single())
+      : await executarOperacao(() => supabase.from(tabela).insert(dados).select().single())
+    if (!resultado.ok) {
+      mostrarErro(`Não foi possível guardar: ${resultado.erro}`)
+      return // modal continua aberto — nada foi salvo
     }
+    mostrarSucesso(editando ? `${tituloSingular} atualizado(a).` : `${tituloSingular} criado(a).`)
     setModalAberto(false)
     setEditando(undefined)
     await carregar()
@@ -109,7 +120,12 @@ export function CadastroContato({ tabela, titulo, tituloSingular }: CadastroCont
   async function excluir(id: string) {
     if (!confirm(`Excluir este(a) ${tituloSingular.toLowerCase()}?`)) return
     const supabase = createClient()
-    await supabase.from(tabela).delete().eq('id', id)
+    const resultado = await executarOperacao(() => supabase.from(tabela).delete().eq('id', id).select().single())
+    if (!resultado.ok) {
+      mostrarErro(`Não foi possível excluir: ${resultado.erro}`)
+      return
+    }
+    mostrarSucesso(`${tituloSingular} excluído(a).`)
     await carregar()
   }
 

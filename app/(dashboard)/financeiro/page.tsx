@@ -32,7 +32,7 @@ import { Lancamento, FechamentoCaixa, Fiado, ResumoFechamentoDia, Fatura, Cheque
 import { formatarMoeda, statusLancamento } from '@/lib/utils'
 import { abrirWhatsapp, mensagemReciboFiado, mensagemFatura } from '@/lib/whatsapp'
 import { carregarFatura, darBaixaFatura, cancelarFatura as cancelarFaturaLib, FaturaCriada } from '@/lib/faturas'
-import { carregarDadosPix, DadosPix } from '@/lib/configuracoes'
+import { carregarDadosPix, carregarDadosEmpresa, DadosPix, DadosEmpresa } from '@/lib/configuracoes'
 import { confirmarCheque } from '@/lib/cheques'
 
 function hoje() {
@@ -85,6 +85,7 @@ export default function FinanceiroPage() {
   const [faturaBaixa, setFaturaBaixa] = useState<Fatura | null>(null)
   const [faturaPDF, setFaturaPDF] = useState<Fatura | null>(null)
   const [pixOficina, setPixOficina] = useState<DadosPix>({ chave: null, titular: null, dadosBancarios: null })
+  const [empresaOficina, setEmpresaOficina] = useState<DadosEmpresa>({ nome: 'Surubim Tornearia', cnpj: null, endereco: null, telefone: null })
 
   const [cheques, setCheques] = useState<Cheque[]>([])
   const [carregandoCheques, setCarregandoCheques] = useState(true)
@@ -175,7 +176,12 @@ export default function FinanceiroPage() {
 
   useEffect(() => { carregar() }, [dataFiltro]) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { carregarFiados() }, []) // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => { carregarFaturas(); carregarDadosPix(createClient()).then(setPixOficina) }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    carregarFaturas()
+    const supabase = createClient()
+    carregarDadosPix(supabase).then(setPixOficina)
+    carregarDadosEmpresa(supabase).then(setEmpresaOficina)
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (ehProprietario) { carregarCheques(); carregarSaldoBanco() } }, [ehProprietario]) // eslint-disable-line react-hooks/exhaustive-deps
 
   function podeEditar(l: Lancamento) {
@@ -825,7 +831,7 @@ export default function FinanceiroPage() {
                 Imprimir / Guardar PDF
               </Button>
             </div>
-            <FaturaPDF fatura={faturaPDF} pix={pixOficina} />
+            <FaturaPDF fatura={faturaPDF} pix={pixOficina} empresa={empresaOficina} />
           </div>
         )}
       </Modal>

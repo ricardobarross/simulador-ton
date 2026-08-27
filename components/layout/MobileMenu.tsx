@@ -4,21 +4,22 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { cn } from '@/lib/utils'
 import { useEffect } from 'react'
+import { useAuth } from '@/lib/auth-context'
 
 const todosItens = [
-  { label: 'Dashboard',          href: '/'               },
-  { label: 'Clientes',           href: '/clientes'       },
-  { label: 'Serviços',           href: '/servicos'       },
-  { label: 'Orçamentos',         href: '/orcamentos'     },
-  { label: 'Ordens de Serviço',  href: '/ordens'         },
-  { label: 'Financeiro',         href: '/financeiro'     },
-  { label: 'Relatórios',         href: '/relatorios'     },
-  { label: 'Fornecedores',       href: '/fornecedores'   },
-  { label: 'Transportadoras',    href: '/transportadoras'},
-  { label: 'Contas a pagar',     href: '/contas'         },
-  { label: 'Retalhos',           href: '/retalhos'       },
-  { label: 'Simulador TON',      href: '/simulador'      },
-  { label: 'Configurações',      href: '/configuracoes'  },
+  { label: 'Dashboard',          href: '/',                soProprietario: false },
+  { label: 'Clientes',           href: '/clientes',        soProprietario: false },
+  { label: 'Serviços',           href: '/servicos',        soProprietario: false },
+  { label: 'Orçamentos',         href: '/orcamentos',      soProprietario: false },
+  { label: 'Ordens de Serviço',  href: '/ordens',          soProprietario: false },
+  { label: 'Financeiro',         href: '/financeiro',      soProprietario: false },
+  { label: 'Relatórios',         href: '/relatorios',      soProprietario: false },
+  { label: 'Fornecedores',       href: '/fornecedores',    soProprietario: false },
+  { label: 'Transportadoras',    href: '/transportadoras', soProprietario: false },
+  { label: 'Contas a pagar',     href: '/contas',          soProprietario: false },
+  { label: 'Retalhos',           href: '/retalhos',        soProprietario: false },
+  { label: 'Simulador TON',      href: '/simulador',       soProprietario: false },
+  { label: 'Configurações',      href: '/configuracoes',   soProprietario: true  },
 ]
 
 interface MobileMenuProps {
@@ -28,6 +29,8 @@ interface MobileMenuProps {
 
 export function MobileMenu({ aberto, onFechar }: MobileMenuProps) {
   const pathname = usePathname()
+  const { ehProprietario } = useAuth()
+  const itens = todosItens.filter(item => !item.soProprietario || ehProprietario)
 
   useEffect(() => {
     if (aberto) document.body.style.overflow = 'hidden'
@@ -62,7 +65,7 @@ export function MobileMenu({ aberto, onFechar }: MobileMenuProps) {
 
         {/* Links */}
         <nav className="flex-1 px-3 py-4 space-y-1 overflow-y-auto">
-          {todosItens.map((item) => {
+          {itens.map((item) => {
             const ativo = item.href === '/'
               ? pathname === '/'
               : pathname.startsWith(item.href)

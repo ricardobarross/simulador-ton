@@ -18,6 +18,8 @@ export interface Cliente {
   id: string
   nome: string
   telefone?: string | null
+  cpf_cnpj?: string | null
+  endereco?: string | null
   ativo: boolean
   created_at: string
   deleted_at?: string | null
@@ -134,6 +136,7 @@ export interface PagamentoOS {
   cheque?: {
     numero_cheque: string
     banco: string
+    agencia: string
     numero_conta: string
     nome_titular: string
     telefone?: string | null
@@ -209,6 +212,7 @@ export interface Cheque {
   id: string
   numero_cheque: string
   banco: string
+  agencia?: string | null
   numero_conta: string
   nome_titular: string
   cliente_id?: string | null

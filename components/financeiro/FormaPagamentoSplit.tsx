@@ -16,7 +16,7 @@ interface FormaPagamentoSplitProps {
   textoRodape?: string
 }
 
-const CHEQUE_VAZIO = { numero_cheque: '', banco: '', numero_conta: '', nome_titular: '', telefone: '', observacoes: '' }
+const CHEQUE_VAZIO = { numero_cheque: '', banco: '', agencia: '', numero_conta: '', nome_titular: '', telefone: '', observacoes: '' }
 
 export function FormaPagamentoSplit({ total, pagamentos, onChange, mostrarCheque = false, textoRodape }: FormaPagamentoSplitProps) {
   const FORMAS = mostrarCheque ? [...FORMAS_BASE.slice(0, -1), 'Cheque', 'Fiado'] : FORMAS_BASE
@@ -85,6 +85,7 @@ export function FormaPagamentoSplit({ total, pagamentos, onChange, mostrarCheque
               <div className="ml-1 pl-3 border-l-2 border-gray-200 grid grid-cols-2 gap-2">
                 <Input label="Número do cheque *" value={p.cheque?.numero_cheque ?? ''} onChange={e => atualizarCheque(i, 'numero_cheque', e.target.value)} />
                 <Input label="Banco *" value={p.cheque?.banco ?? ''} onChange={e => atualizarCheque(i, 'banco', e.target.value)} />
+                <Input label="Agência *" value={p.cheque?.agencia ?? ''} onChange={e => atualizarCheque(i, 'agencia', e.target.value)} />
                 <Input label="Número da conta *" value={p.cheque?.numero_conta ?? ''} onChange={e => atualizarCheque(i, 'numero_conta', e.target.value)} />
                 <Input label="Nome do titular *" value={p.cheque?.nome_titular ?? ''} onChange={e => atualizarCheque(i, 'nome_titular', e.target.value)} />
                 <Input label="Telefone" value={p.cheque?.telefone ?? ''} onChange={e => atualizarCheque(i, 'telefone', e.target.value)} />

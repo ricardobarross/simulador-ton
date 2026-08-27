@@ -3,6 +3,7 @@
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { cn } from '@/lib/utils'
+import { useAuth } from '@/lib/auth-context'
 
 const navegacao = [
   {
@@ -82,6 +83,7 @@ const navegacaoSecundaria = [
   {
     label: 'Fornecedores',
     href: '/fornecedores',
+    soProprietario: false,
     icon: (
       <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
@@ -92,6 +94,7 @@ const navegacaoSecundaria = [
   {
     label: 'Transportadoras',
     href: '/transportadoras',
+    soProprietario: false,
     icon: (
       <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
@@ -102,6 +105,7 @@ const navegacaoSecundaria = [
   {
     label: 'Contas a pagar',
     href: '/contas',
+    soProprietario: false,
     icon: (
       <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
@@ -112,6 +116,7 @@ const navegacaoSecundaria = [
   {
     label: 'Retalhos',
     href: '/retalhos',
+    soProprietario: false,
     icon: (
       <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
@@ -122,6 +127,7 @@ const navegacaoSecundaria = [
   {
     label: 'Simulador TON',
     href: '/simulador',
+    soProprietario: false,
     icon: (
       <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
@@ -132,6 +138,7 @@ const navegacaoSecundaria = [
   {
     label: 'Configurações',
     href: '/configuracoes',
+    soProprietario: true,
     icon: (
       <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
@@ -145,9 +152,12 @@ const navegacaoSecundaria = [
 
 export function Sidebar() {
   const pathname = usePathname()
+  const { ehProprietario } = useAuth()
 
   const ativo = (href: string) =>
     href === '/' ? pathname === '/' : pathname.startsWith(href)
+
+  const itensSecundarios = navegacaoSecundaria.filter(item => !item.soProprietario || ehProprietario)
 
   return (
     <aside className="hidden lg:flex flex-col w-64 min-h-screen bg-gray-900 text-white">
@@ -181,7 +191,7 @@ export function Sidebar() {
 
       {/* Navegação secundária */}
       <div className="px-3 py-4 border-t border-gray-800 space-y-1">
-        {navegacaoSecundaria.map((item) => (
+        {itensSecundarios.map((item) => (
           <Link
             key={item.href}
             href={item.href}

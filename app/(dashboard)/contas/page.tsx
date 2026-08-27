@@ -11,6 +11,8 @@ import { Table, TableHead, TableBody, Th, Td, TableRow } from '@/components/ui/T
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner'
 import { ContaFixa, ContaVariavel, StatusConta, Fornecedor } from '@/types'
 import { formatarMoeda, formatarData, statusLancamento } from '@/lib/utils'
+import { executarOperacao } from '@/lib/api-helpers'
+import { useToast } from '@/lib/toast-context'
 
 // ─── Contas fixas ─────────────────────────────────────────────
 function ContaFixaForm({
@@ -122,6 +124,7 @@ function ContaVariavelForm({
 }
 
 export default function ContasPage() {
+  const { mostrarErro, mostrarSucesso } = useToast()
   const [aba, setAba] = useState<'fixas' | 'variaveis'>('fixas')
   const [fixas, setFixas] = useState<ContaFixa[]>([])
   const [variaveis, setVariaveis] = useState<ContaVariavel[]>([])
@@ -137,30 +140,44 @@ export default function ContasPage() {
     setCarregando(true)
     const supabase = createClient()
     const [fixasRes, variaveisRes, fornecedoresRes] = await Promise.all([
-      supabase.from('contas_fixas').select('*').order('dia_vencimento'),
-      supabase.from('contas_variaveis').select('*, fornecedor:fornecedores(*)').order('data_vencimento'),
-      supabase.from('fornecedores').select('*').eq('ativo', true).order('nome'),
+      executarOperacao(() => supabase.from('contas_fixas').select('*').order('dia_vencimento')),
+      executarOperacao(() => supabase.from('contas_variaveis').select('*, fornecedor:fornecedores(*)').order('data_vencimento')),
+      executarOperacao(() => supabase.from('fornecedores').select('*').eq('ativo', true).order('nome')),
     ])
-    setFixas((fixasRes.data ?? []) as ContaFixa[])
-    setVariaveis((variaveisRes.data ?? []) as ContaVariavel[])
-    setFornecedores((fornecedoresRes.data ?? []) as Fornecedor[])
+    if (!fixasRes.ok) mostrarErro(`Não foi possível carregar as contas fixas: ${fixasRes.erro}`)
+    if (!variaveisRes.ok) mostrarErro(`Não foi possível carregar as contas variáveis: ${variaveisRes.erro}`)
+    setFixas(fixasRes.ok ? (fixasRes.data as ContaFixa[]) : [])
+    setVariaveis(variaveisRes.ok ? (variaveisRes.data as ContaVariavel[]) : [])
+    setFornecedores(fornecedoresRes.ok ? (fornecedoresRes.data as Fornecedor[]) : [])
     setCarregando(false)
   }
 
-  useEffect(() => { carregar() }, [])
+  useEffect(() => { carregar() }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   async function guardarFixa(dados: Partial<ContaFixa>) {
     const supabase = createClient()
-    if (editandoFixa) await supabase.from('contas_fixas').update(dados).eq('id', editandoFixa.id)
-    else await supabase.from('contas_fixas').insert(dados)
+    const resultado = editandoFixa
+      ? await executarOperacao(() => supabase.from('contas_fixas').update(dados).eq('id', editandoFixa.id).select().single())
+      : await executarOperacao(() => supabase.from('contas_fixas').insert(dados).select().single())
+    if (!resultado.ok) {
+      mostrarErro(`Não foi possível guardar a conta fixa: ${resultado.erro}`)
+      return // modal continua aberto — nada foi salvo
+    }
+    mostrarSucesso(editandoFixa ? 'Conta fixa atualizada.' : 'Conta fixa criada.')
     setModalAberto(false); setEditandoFixa(undefined)
     await carregar()
   }
 
   async function guardarVariavel(dados: Partial<ContaVariavel>) {
     const supabase = createClient()
-    if (editandoVariavel) await supabase.from('contas_variaveis').update(dados).eq('id', editandoVariavel.id)
-    else await supabase.from('contas_variaveis').insert(dados)
+    const resultado = editandoVariavel
+      ? await executarOperacao(() => supabase.from('contas_variaveis').update(dados).eq('id', editandoVariavel.id).select().single())
+      : await executarOperacao(() => supabase.from('contas_variaveis').insert(dados).select().single())
+    if (!resultado.ok) {
+      mostrarErro(`Não foi possível guardar a conta: ${resultado.erro}`)
+      return // modal continua aberto — nada foi salvo
+    }
+    mostrarSucesso(editandoVariavel ? 'Conta atualizada.' : 'Conta criada.')
     setModalAberto(false); setEditandoVariavel(undefined)
     await carregar()
   }
@@ -168,14 +185,24 @@ export default function ContasPage() {
   async function excluirFixa(id: string) {
     if (!confirm('Excluir esta conta fixa?')) return
     const supabase = createClient()
-    await supabase.from('contas_fixas').delete().eq('id', id)
+    const resultado = await executarOperacao(() => supabase.from('contas_fixas').delete().eq('id', id).select().single())
+    if (!resultado.ok) {
+      mostrarErro(`Não foi possível excluir: ${resultado.erro}`)
+      return
+    }
+    mostrarSucesso('Conta fixa excluída.')
     await carregar()
   }
 
   async function excluirVariavel(id: string) {
     if (!confirm('Excluir esta conta?')) return
     const supabase = createClient()
-    await supabase.from('contas_variaveis').delete().eq('id', id)
+    const resultado = await executarOperacao(() => supabase.from('contas_variaveis').delete().eq('id', id).select().single())
+    if (!resultado.ok) {
+      mostrarErro(`Não foi possível excluir: ${resultado.erro}`)
+      return
+    }
+    mostrarSucesso('Conta excluída.')
     await carregar()
   }
 

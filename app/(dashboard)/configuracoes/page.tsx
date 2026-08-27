@@ -129,6 +129,25 @@ export default function ConfiguracoesPage() {
 
               <Card>
                 <CardHeader>
+                  <CardTitle>Dados da empresa</CardTitle>
+                </CardHeader>
+                <p className="text-xs text-gray-500 mb-4">
+                  Aparecem no cabeçalho de faturas, orçamentos e ordens de serviço impressas.
+                </p>
+                <div className="space-y-3">
+                  {configs.filter(c => c.chave.startsWith('empresa_')).map(c => (
+                    <ConfigField
+                      key={c.chave}
+                      config={c}
+                      salvando={salvandoConfig === c.chave}
+                      onGuardar={(valor) => guardarConfig(c.chave, valor)}
+                    />
+                  ))}
+                </div>
+              </Card>
+
+              <Card>
+                <CardHeader>
                   <CardTitle>Dados para pagamento (PIX)</CardTitle>
                 </CardHeader>
                 <p className="text-xs text-gray-500 mb-4">
@@ -154,7 +173,7 @@ export default function ConfiguracoesPage() {
                   A chave da Groq é obrigatória para a secretária IA (botão de chat no canto da tela) funcionar. As chaves de WhatsApp são opcionais — só necessárias se um dia quiser envio automático de mensagens; hoje o sistema gera a mensagem e abre o WhatsApp manualmente.
                 </p>
                 <div className="space-y-3">
-                  {configs.filter(c => !c.chave.startsWith('pix_') && c.chave !== 'dados_bancarios').map(c => (
+                  {configs.filter(c => !c.chave.startsWith('pix_') && !c.chave.startsWith('empresa_') && c.chave !== 'dados_bancarios').map(c => (
                     <ConfigField
                       key={c.chave}
                       config={c}
