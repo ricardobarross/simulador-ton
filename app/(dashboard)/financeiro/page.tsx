@@ -28,12 +28,13 @@ import { ModalBaixaFatura } from '@/components/financeiro/ModalBaixaFatura'
 import { FaturaPDF, imprimirFatura } from '@/components/financeiro/FaturaPDF'
 import { ChequesList } from '@/components/financeiro/ChequesList'
 import { DevolverChequeForm } from '@/components/financeiro/DevolverChequeForm'
+import { NovoChequeForm } from '@/components/financeiro/NovoChequeForm'
 import { Lancamento, FechamentoCaixa, Fiado, ResumoFechamentoDia, Fatura, Cheque } from '@/types'
 import { formatarMoeda, statusLancamento } from '@/lib/utils'
 import { abrirWhatsapp, mensagemReciboFiado, mensagemFatura } from '@/lib/whatsapp'
 import { carregarFatura, darBaixaFatura, cancelarFatura as cancelarFaturaLib, FaturaCriada } from '@/lib/faturas'
 import { carregarDadosPix, carregarDadosEmpresa, DadosPix, DadosEmpresa } from '@/lib/configuracoes'
-import { confirmarCheque } from '@/lib/cheques'
+import { confirmarCheque, cadastrarChequeManual, DadosChequeManual } from '@/lib/cheques'
 import { ajustarSaldoConta } from '@/lib/financeiro'
 import { AjustarSaldoForm } from '@/components/financeiro/AjustarSaldoForm'
 import { DestinoFinanceiro } from '@/types'
@@ -94,6 +95,7 @@ export default function FinanceiroPage() {
   const [carregandoCheques, setCarregandoCheques] = useState(true)
   const [filtroStatusCheque, setFiltroStatusCheque] = useState<'aguardando' | 'compensado' | 'devolvido' | 'todos'>('aguardando')
   const [chequeDevolvendo, setChequeDevolvendo] = useState<Cheque | null>(null)
+  const [modalNovoCheque, setModalNovoCheque] = useState(false)
 
   const [saldoCaixa, setSaldoCaixa] = useState(0)
   const [saldoBanco, setSaldoBanco] = useState(0)
@@ -156,15 +158,38 @@ export default function FinanceiroPage() {
     setCarregandoCheques(true)
     const supabase = createClient()
     const resultado = await executarOperacao(() =>
-      supabase.from('cheques').select('*, cliente:clientes(id, nome, telefone)').is('deleted_at', null).order('data_recebimento', { ascending: false })
+      supabase
+        .from('cheques')
+        .select('*, cliente:clientes(id, nome, telefone), cheque_ordens_servico(ordem_servico:ordens_servico(id, numero))')
+        .is('deleted_at', null)
+        .order('data_recebimento', { ascending: false })
     )
     if (!resultado.ok) {
       // Funcionário não vê cheques (RLS) — não é um erro real, só não mostramos a aba pra ele.
       setCarregandoCheques(false)
       return
     }
-    setCheques((resultado.data ?? []) as Cheque[])
+    type ChequeLinha = Cheque & { cheque_ordens_servico?: { ordem_servico: { id: string; numero: string } | { id: string; numero: string }[] | null }[] | null }
+    const linhas = (resultado.data ?? []) as ChequeLinha[]
+    setCheques(linhas.map(c => ({
+      ...c,
+      ordens_vinculadas: (c.cheque_ordens_servico ?? [])
+        .map(v => (Array.isArray(v.ordem_servico) ? v.ordem_servico[0] : v.ordem_servico))
+        .filter((o): o is { id: string; numero: string } => !!o),
+    })))
     setCarregandoCheques(false)
+  }
+
+  async function cadastrarCheque(dados: DadosChequeManual) {
+    const supabase = createClient()
+    const resultado = await cadastrarChequeManual(supabase, dados)
+    if (!resultado.ok) {
+      mostrarErro(`Não foi possível cadastrar o cheque: ${resultado.erro}`)
+      return // modal continua aberto — nada foi salvo
+    }
+    mostrarSucesso('Cheque cadastrado.')
+    setModalNovoCheque(false)
+    await carregarCheques()
   }
 
   async function carregarSaldos() {
@@ -497,6 +522,11 @@ export default function FinanceiroPage() {
             {aba === 'faturas' && (
               <Button variante="primario" onClick={() => setModalGerarFatura(true)}>
                 + Gerar fatura consolidada
+              </Button>
+            )}
+            {aba === 'cheques' && ehProprietario && (
+              <Button variante="primario" onClick={() => setModalNovoCheque(true)}>
+                + Novo cheque
               </Button>
             )}
           </div>
@@ -882,6 +912,15 @@ export default function FinanceiroPage() {
             onCancelar={() => setChequeDevolvendo(null)}
           />
         )}
+      </Modal>
+
+      <Modal
+        aberto={modalNovoCheque}
+        onFechar={() => setModalNovoCheque(false)}
+        titulo="Novo cheque"
+        largura="lg"
+      >
+        <NovoChequeForm onGuardar={cadastrarCheque} onCancelar={() => setModalNovoCheque(false)} />
       </Modal>
 
       <Modal

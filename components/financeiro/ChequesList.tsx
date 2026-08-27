@@ -29,6 +29,7 @@ export function ChequesList({ cheques, onCompensar, onDevolver }: ChequesListPro
           <Th>Banco / Conta</Th>
           <Th>Titular</Th>
           <Th>Cliente</Th>
+          <Th>O.S. vinculadas</Th>
           <Th>Recebido em</Th>
           <Th>Estado</Th>
           <Th className="text-right">Valor</Th>
@@ -45,6 +46,18 @@ export function ChequesList({ cheques, onCompensar, onDevolver }: ChequesListPro
               {c.telefone && <span className="block text-xs text-gray-400">{c.telefone}</span>}
             </Td>
             <Td>{c.cliente?.nome ?? '—'}</Td>
+            <Td>
+              {c.ordens_vinculadas && c.ordens_vinculadas.length > 0 ? (
+                <div className="flex flex-wrap gap-1 max-w-[10rem]">
+                  {c.ordens_vinculadas.map(o => (
+                    <span key={o.id} className="text-xs bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded">{o.numero}</span>
+                  ))}
+                </div>
+              ) : (
+                <span className="text-gray-300">—</span>
+              )}
+              {c.apenas_registro && <span className="block text-xs text-gray-400 mt-0.5">só registro</span>}
+            </Td>
             <Td>{formatarData(c.data_recebimento)}</Td>
             <Td>
               <Badge cor={statusInfo[c.status].cor}>{statusInfo[c.status].label}</Badge>

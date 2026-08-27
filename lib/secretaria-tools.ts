@@ -311,6 +311,52 @@ export const ferramentasSecretaria = [
   {
     type: 'function',
     function: {
+      name: 'buscar_lancamentos',
+      description: 'Procura lançamentos já registrados (por descrição/categoria e opcionalmente uma data) pra achar o lancamento_id certo antes de editar ou excluir. Use SEMPRE antes de editar_lancamento ou excluir_lancamento — nunca adivinhe o id.',
+      parameters: {
+        type: 'object',
+        properties: {
+          busca: { type: 'string', description: 'Palavra da descrição ou categoria, ex: "aluguel"' },
+          data: { type: 'string', description: 'Data no formato AAAA-MM-DD, se souber' },
+        },
+        required: ['busca'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'editar_lancamento',
+      description: 'Corrige um lançamento que já existe (valor, descrição, categoria, forma de pagamento, data ou estado errados) — USE ISTO pra "consertar"/"corrigir" um lançamento, nunca crie um lançamento novo pra corrigir um antigo. Ache o lancamento_id certo com buscar_lancamentos primeiro e confirme com a pessoa qual é antes de alterar. Só manda os campos que realmente mudaram.',
+      parameters: {
+        type: 'object',
+        properties: {
+          lancamento_id: { type: 'string' },
+          descricao: { type: 'string' },
+          valor: { type: 'number' },
+          categoria: { type: 'string' },
+          forma_pagamento: { type: 'string', description: 'Dinheiro, Pix, Débito, Crédito ou Transferência' },
+          data: { type: 'string', description: 'Data no formato AAAA-MM-DD' },
+        },
+        required: ['lancamento_id'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'excluir_lancamento',
+      description: 'Exclui um lançamento (ex.: foi lançado errado/duplicado e a pessoa quer apagar em vez de corrigir). Ache o lancamento_id certo com buscar_lancamentos primeiro e confirme com a pessoa qual é antes de apagar.',
+      parameters: {
+        type: 'object',
+        properties: { lancamento_id: { type: 'string' } },
+        required: ['lancamento_id'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'registrar_fiado',
       description: 'Anota que um cliente ficou devendo (comprou fiado, "no caderno", vai pagar depois). Use isto quando a pessoa disser algo como "fulano ficou devendo X", "anota aí pro fulano", "vendi fiado pro fulano". Procure o cliente primeiro com buscar_clientes.',
       parameters: {
@@ -572,6 +618,52 @@ export async function executarFerramenta(nome: string, args: Record<string, unkn
         .single()
       if (error) return { erro: error.message }
       return { lancamento: data }
+    }
+
+    case 'buscar_lancamentos': {
+      let query = supabase
+        .from('lancamentos')
+        .select('id, tipo, descricao, categoria, valor, forma_pagamento, data, status')
+        .is('deleted_at', null)
+        .or(`descricao.ilike.%${args.busca}%,categoria.ilike.%${args.busca}%`)
+        .order('data', { ascending: false })
+        .limit(15)
+      if (args.data) query = query.eq('data', args.data as string)
+      const { data, error } = await query
+      if (error) return { erro: error.message }
+      return { lancamentos: data }
+    }
+
+    case 'editar_lancamento': {
+      const dados: Record<string, unknown> = {}
+      if (args.descricao !== undefined) dados.descricao = args.descricao
+      if (args.valor !== undefined) dados.valor = args.valor
+      if (args.categoria !== undefined) dados.categoria = args.categoria
+      if (args.forma_pagamento !== undefined) dados.forma_pagamento = args.forma_pagamento
+      if (args.data !== undefined) dados.data = args.data
+      if (Object.keys(dados).length === 0) return { erro: 'Nenhum campo pra alterar foi informado.' }
+
+      const { data, error } = await supabase
+        .from('lancamentos')
+        .update(dados)
+        .eq('id', args.lancamento_id)
+        .is('deleted_at', null)
+        .select()
+        .single()
+      if (error) return { erro: error.message }
+      return { lancamento: data, confirmado: true }
+    }
+
+    case 'excluir_lancamento': {
+      const { data, error } = await supabase
+        .from('lancamentos')
+        .update({ deleted_at: new Date().toISOString() })
+        .eq('id', args.lancamento_id)
+        .is('deleted_at', null)
+        .select()
+        .single()
+      if (error) return { erro: error.message }
+      return { excluido: true, lancamento: data }
     }
 
     case 'registrar_fiado': {

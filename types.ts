@@ -227,6 +227,10 @@ export interface Cheque {
   lancamento_id?: string | null
   fiado_id?: string | null
   observacoes?: string | null
+  /** Cadastrado manualmente pra só documentar/vincular O.S. já pagas por outro meio — compensar não gera lançamento novo. */
+  apenas_registro?: boolean
+  /** Preenchido no front a partir de cheque_ordens_servico — só usado no cadastro manual (multi-O.S.). */
+  ordens_vinculadas?: { id: string; numero: string }[] | null
   created_at: string
   created_by?: string | null
   deleted_at?: string | null
