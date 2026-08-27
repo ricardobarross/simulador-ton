@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { createClient } from '@/lib/supabase'
 import { useAuth } from '@/lib/auth-context'
-import { executarFerramenta } from '@/lib/secretaria-tools'
+import { executarFerramenta, buscarPendencias, formatarBriefingInicial } from '@/lib/secretaria-tools'
 import { cn } from '@/lib/utils'
 
 interface ToolCall {
@@ -25,18 +25,6 @@ interface BolhaVisivel {
   texto: string
 }
 
-const opcoesRapidas = [
-  'Registrar uma entrada de dinheiro',
-  'Registrar uma saída de dinheiro',
-  'Cadastrar um cliente novo',
-  'Anotar um fiado',
-  'Registrar pagamento de um fiado',
-  'Montar um orçamento',
-  'Abrir uma ordem de serviço',
-  'Avisar que um serviço ficou pronto',
-  'Fechar o caixa de hoje',
-]
-
 export function ChatSecretaria() {
   const { perfil } = useAuth()
   const [aberto, setAberto] = useState(false)
@@ -44,12 +32,13 @@ export function ChatSecretaria() {
   const [bolhas, setBolhas] = useState<BolhaVisivel[]>([])
   const [texto, setTexto] = useState('')
   const [enviando, setEnviando] = useState(false)
+  const [carregandoBriefing, setCarregandoBriefing] = useState(false)
   const [erro, setErro] = useState('')
   const fimRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     fimRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [bolhas, enviando, aberto])
+  }, [bolhas, enviando, carregandoBriefing, aberto])
 
   async function enviarParaAPI(mensagens: ChatMessage[]): Promise<ChatMessage> {
     const supabase = createClient()
@@ -121,13 +110,30 @@ export function ChatSecretaria() {
     }
   }
 
-  function abrir() {
+  async function abrir() {
     setAberto(true)
-    if (bolhas.length === 0) {
+    if (bolhas.length > 0) return
+
+    const primeiroNome = perfil?.nome?.split(' ')[0] ?? ''
+    setCarregandoBriefing(true)
+    try {
+      const supabase = createClient()
+      const pendencias = await buscarPendencias(supabase)
+      const briefing = formatarBriefingInicial(pendencias)
+      const texto = `${saudacao()}, ${primeiroNome}! Antes de tudo, um resumo rápido:\n\n${briefing}\n\nE aí, o que vamos fazer?`
+      setBolhas([{ autor: 'ia', texto }])
+      // Entra no histórico também (como se ela tivesse "dito" isso), pra ela
+      // ter esse contexto se a conversa continuar fazendo referência a algo daqui.
+      setHistorico([{ role: 'assistant', content: texto }])
+    } catch {
+      // Se o resumo falhar por algum motivo, não trava a conversa — ela só
+      // cumprimenta normalmente e segue sem o briefing.
       setBolhas([{
         autor: 'ia',
-        texto: `${saudacao()}, ${perfil?.nome?.split(' ')[0] ?? ''}! Sou a secretária da oficina. O que vamos fazer?`,
+        texto: `${saudacao()}, ${primeiroNome}! Sou a secretária da oficina. O que vamos fazer?`,
       }])
+    } finally {
+      setCarregandoBriefing(false)
     }
   }
 
@@ -182,17 +188,11 @@ export function ChatSecretaria() {
               </div>
             ))}
 
-            {bolhas.length === 1 && !enviando && (
-              <div className="flex flex-col gap-2 pt-2">
-                {opcoesRapidas.map(op => (
-                  <button
-                    key={op}
-                    onClick={() => enviarMensagem(op)}
-                    className="text-left text-sm bg-white border border-gray-200 rounded-lg px-3 py-2 hover:border-blue-400 hover:bg-blue-50 transition-colors"
-                  >
-                    {op}
-                  </button>
-                ))}
+            {carregandoBriefing && (
+              <div className="flex justify-start">
+                <div className="bg-white border border-gray-200 rounded-2xl rounded-bl-sm px-3 py-2 text-sm text-gray-400">
+                  a conferir as contas...
+                </div>
               </div>
             )}
 
@@ -214,12 +214,12 @@ export function ChatSecretaria() {
               onChange={e => setTexto(e.target.value)}
               onKeyDown={e => e.key === 'Enter' && enviarMensagem(texto)}
               placeholder="Escreve aqui..."
-              disabled={enviando}
+              disabled={enviando || carregandoBriefing}
               className="flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-50"
             />
             <button
               onClick={() => enviarMensagem(texto)}
-              disabled={enviando || !texto.trim()}
+              disabled={enviando || carregandoBriefing || !texto.trim()}
               className="w-10 h-10 flex-shrink-0 rounded-lg bg-blue-600 text-white flex items-center justify-center hover:bg-blue-700 disabled:opacity-50"
             >
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">

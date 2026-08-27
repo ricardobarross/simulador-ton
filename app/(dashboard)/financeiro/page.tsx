@@ -34,6 +34,9 @@ import { abrirWhatsapp, mensagemReciboFiado, mensagemFatura } from '@/lib/whatsa
 import { carregarFatura, darBaixaFatura, cancelarFatura as cancelarFaturaLib, FaturaCriada } from '@/lib/faturas'
 import { carregarDadosPix, carregarDadosEmpresa, DadosPix, DadosEmpresa } from '@/lib/configuracoes'
 import { confirmarCheque } from '@/lib/cheques'
+import { ajustarSaldoConta } from '@/lib/financeiro'
+import { AjustarSaldoForm } from '@/components/financeiro/AjustarSaldoForm'
+import { DestinoFinanceiro } from '@/types'
 
 function hoje() {
   return new Date().toISOString().slice(0, 10)
@@ -92,7 +95,9 @@ export default function FinanceiroPage() {
   const [filtroStatusCheque, setFiltroStatusCheque] = useState<'aguardando' | 'compensado' | 'devolvido' | 'todos'>('aguardando')
   const [chequeDevolvendo, setChequeDevolvendo] = useState<Cheque | null>(null)
 
+  const [saldoCaixa, setSaldoCaixa] = useState(0)
   const [saldoBanco, setSaldoBanco] = useState(0)
+  const [modalAjusteSaldo, setModalAjusteSaldo] = useState<DestinoFinanceiro | null>(null)
 
   async function carregar() {
     setCarregando(true)
@@ -162,16 +167,37 @@ export default function FinanceiroPage() {
     setCarregandoCheques(false)
   }
 
-  async function carregarSaldoBanco() {
+  async function carregarSaldos() {
     const supabase = createClient()
-    // Saldo acumulado (todo o histórico, não só o dia filtrado) do que foi pago via
-    // Pix/cartão/transferência — é o "dinheiro" que está no banco, não na gaveta.
+    // Saldo acumulado (todo o histórico, não só o dia filtrado) por destino:
+    // 'caixa' é o dinheiro físico na gaveta, 'banco' é Pix/cartão/transferência.
     const resultado = await executarOperacao(() =>
-      supabase.from('lancamentos').select('tipo, valor').eq('status', 'pago').eq('destino', 'banco').is('deleted_at', null)
+      supabase.from('lancamentos').select('tipo, valor, destino').eq('status', 'pago').is('deleted_at', null)
     )
     if (!resultado.ok) return
-    const linhas = resultado.data as { tipo: 'entrada' | 'saida'; valor: number }[]
-    setSaldoBanco(linhas.reduce((s, l) => s + (l.tipo === 'entrada' ? l.valor : -l.valor), 0))
+    const linhas = resultado.data as { tipo: 'entrada' | 'saida'; valor: number; destino: DestinoFinanceiro }[]
+    const somaPor = (destino: DestinoFinanceiro) =>
+      linhas.filter(l => l.destino === destino).reduce((s, l) => s + (l.tipo === 'entrada' ? l.valor : -l.valor), 0)
+    setSaldoCaixa(somaPor('caixa'))
+    setSaldoBanco(somaPor('banco'))
+  }
+
+  async function confirmarAjusteSaldo(saldoReal: number, observacaoExtra: string) {
+    if (!modalAjusteSaldo) return
+    const supabase = createClient()
+    const saldoAtual = modalAjusteSaldo === 'caixa' ? saldoCaixa : saldoBanco
+    const resultado = await ajustarSaldoConta(supabase, modalAjusteSaldo, saldoAtual, saldoReal, observacaoExtra, perfil?.id ?? null)
+    if (!resultado.ok) {
+      mostrarErro(`Não foi possível ajustar o saldo: ${resultado.erro}`)
+      return
+    }
+    if (!resultado.data) {
+      mostrarSucesso('Sem diferença — nada a ajustar.')
+    } else {
+      mostrarSucesso('Saldo ajustado. A diferença ficou registada nas observações do lançamento.')
+    }
+    setModalAjusteSaldo(null)
+    await Promise.all([carregar(), carregarSaldos()])
   }
 
   useEffect(() => { carregar() }, [dataFiltro]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -182,7 +208,7 @@ export default function FinanceiroPage() {
     carregarDadosPix(supabase).then(setPixOficina)
     carregarDadosEmpresa(supabase).then(setEmpresaOficina)
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => { if (ehProprietario) { carregarCheques(); carregarSaldoBanco() } }, [ehProprietario]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (ehProprietario) { carregarCheques(); carregarSaldos() } }, [ehProprietario]) // eslint-disable-line react-hooks/exhaustive-deps
 
   function podeEditar(l: Lancamento) {
     return ehProprietario || (l.data === hoje() && !fechamento)
@@ -202,7 +228,7 @@ export default function FinanceiroPage() {
     setModalAberto(false)
     setEditando(undefined)
     await carregar()
-    if (ehProprietario) await carregarSaldoBanco()
+    if (ehProprietario) await carregarSaldos()
   }
 
   async function excluir(l: Lancamento) {
@@ -219,7 +245,7 @@ export default function FinanceiroPage() {
     }
     mostrarSucesso('Lançamento excluído.')
     await carregar()
-    if (ehProprietario) await carregarSaldoBanco()
+    if (ehProprietario) await carregarSaldos()
   }
 
   async function fecharCaixa(dados: { valor_abertura: number; valor_contado: number; observacoes: string }) {
@@ -309,7 +335,7 @@ export default function FinanceiroPage() {
     })
     setModalPagamentoAberto(false)
     setFiadoSelecionado(null)
-    await Promise.all([carregarFiados(), carregar(), ehProprietario ? carregarSaldoBanco() : Promise.resolve()])
+    await Promise.all([carregarFiados(), carregar(), ehProprietario ? carregarSaldos() : Promise.resolve()])
   }
 
   async function excluirFiado(fiado: Fiado) {
@@ -367,7 +393,7 @@ export default function FinanceiroPage() {
     }
     mostrarSucesso(`Fatura ${faturaBaixa.numero_fatura} paga — caixa e fiados atualizados.`)
     setFaturaBaixa(null)
-    await Promise.all([carregarFaturas(), carregarFiados(), carregar(), ehProprietario ? carregarSaldoBanco() : Promise.resolve()])
+    await Promise.all([carregarFaturas(), carregarFiados(), carregar(), ehProprietario ? carregarSaldos() : Promise.resolve()])
   }
 
   async function cancelarFaturaHandler(fatura: Fatura) {
@@ -390,7 +416,7 @@ export default function FinanceiroPage() {
       return
     }
     mostrarSucesso(`Cheque nº ${cheque.numero_cheque} compensado — entrada registada no Financeiro.`)
-    await Promise.all([carregarCheques(), carregar(), carregarSaldoBanco()])
+    await Promise.all([carregarCheques(), carregar(), carregarSaldos()])
   }
 
   async function devolverChequeHandler(motivo: string) {
@@ -501,7 +527,15 @@ export default function FinanceiroPage() {
           <LoadingSpinner />
         ) : (
           <>
-            <ResumoFinanceiro entradas={totalEntradas} saidas={totalSaidas} pendente={totalPendente} saldoBanco={saldoBanco} mostrarSaldoBanco={ehProprietario} />
+            <ResumoFinanceiro
+              entradas={totalEntradas}
+              saidas={totalSaidas}
+              pendente={totalPendente}
+              saldoCaixa={saldoCaixa}
+              saldoBanco={saldoBanco}
+              mostrarSaldoBanco={ehProprietario}
+              onAjustarSaldo={ehProprietario ? setModalAjusteSaldo : undefined}
+            />
 
             {fechamento && (
               <p className="text-xs text-orange-600 bg-orange-50 px-3 py-2 rounded-lg">
@@ -846,6 +880,21 @@ export default function FinanceiroPage() {
             cheque={chequeDevolvendo}
             onConfirmar={devolverChequeHandler}
             onCancelar={() => setChequeDevolvendo(null)}
+          />
+        )}
+      </Modal>
+
+      <Modal
+        aberto={!!modalAjusteSaldo}
+        onFechar={() => setModalAjusteSaldo(null)}
+        titulo={`Ajustar saldo — ${modalAjusteSaldo === 'caixa' ? 'Caixa (Dinheiro)' : 'Banco'}`}
+      >
+        {modalAjusteSaldo && (
+          <AjustarSaldoForm
+            conta={modalAjusteSaldo}
+            saldoAtual={modalAjusteSaldo === 'caixa' ? saldoCaixa : saldoBanco}
+            onConfirmar={confirmarAjusteSaldo}
+            onCancelar={() => setModalAjusteSaldo(null)}
           />
         )}
       </Modal>

@@ -1,6 +1,7 @@
 import { SupabaseClient } from '@supabase/supabase-js'
-import { OrdemServico, PagamentoOS, StatusOrdem, SituacaoPagamentoOrdem } from '@/types'
+import { OrdemServico, PagamentoOS, StatusOrdem, SituacaoPagamentoOrdem, DestinoFinanceiro, Lancamento } from '@/types'
 import { executarOperacao, ResultadoOperacao } from '@/lib/api-helpers'
+import { formatarMoeda } from '@/lib/utils'
 
 export interface LancamentoOrdemResultado {
   fiados_criados: string[]
@@ -103,6 +104,58 @@ export async function sincronizarLancamentoOrdem(
 /** Monta um resumo textual da forma de pagamento a partir das partes (ex.: "Dinheiro + Pix"). */
 export function resumoFormaPagamento(partes: PagamentoOS[]): string {
   return partes.filter(p => p.valor > 0).map(p => p.forma).join(' + ') || 'Dinheiro'
+}
+
+/**
+ * Corrige o saldo acumulado de uma conta (Caixa/Dinheiro ou Banco) quando ele
+ * não bate com o valor real conferido pelo usuário (ex.: extrato do banco,
+ * dinheiro contado na gaveta). Em vez de editar os lançamentos passados —
+ * o que quebraria o histórico —, cria UM lançamento de ajuste com a diferença
+ * (entrada se o real for maior, saída se for menor), já com a comparação
+ * "sistema x real" registada nas observações do próprio lançamento.
+ *
+ * A `destino` é sempre derivada por trigger no banco a partir da
+ * `forma_pagamento` (Dinheiro → caixa; qualquer outra → banco) — por isso
+ * escolhemos 'Dinheiro' pra ajuste de caixa e 'Transferência' pra ajuste de
+ * banco, garantindo que caia na conta certa.
+ *
+ * Se a diferença for zero (arredondada a centavos), não cria nada.
+ */
+export async function ajustarSaldoConta(
+  supabase: SupabaseClient,
+  conta: DestinoFinanceiro,
+  saldoAtual: number,
+  saldoReal: number,
+  observacaoExtra?: string,
+  usuarioId?: string | null
+): Promise<ResultadoOperacao<Lancamento | null>> {
+  const diferenca = Math.round((saldoReal - saldoAtual) * 100) / 100
+
+  if (diferenca === 0) {
+    return { ok: true, data: null, erro: null }
+  }
+
+  const nomeConta = conta === 'caixa' ? 'Caixa (Dinheiro)' : 'Banco'
+  const observacoes = [
+    `Ajuste de saldo — ${nomeConta}: sistema mostrava ${formatarMoeda(saldoAtual)}, ` +
+      `saldo real informado ${formatarMoeda(saldoReal)} — diferença de ${formatarMoeda(Math.abs(diferenca))} ` +
+      `${diferenca > 0 ? 'a mais' : 'a menos'} no sistema.`,
+    observacaoExtra?.trim() || null,
+  ].filter(Boolean).join('\n')
+
+  const payload = {
+    tipo: diferenca > 0 ? 'entrada' : 'saida',
+    descricao: `Ajuste de saldo — ${nomeConta}`,
+    categoria: 'Ajuste de saldo',
+    valor: Math.abs(diferenca),
+    forma_pagamento: conta === 'caixa' ? 'Dinheiro' : 'Transferência',
+    data: new Date().toISOString().slice(0, 10),
+    status: 'pago',
+    observacoes,
+    created_by: usuarioId ?? null,
+  }
+
+  return executarOperacao(() => supabase.from('lancamentos').insert(payload).select().single())
 }
 
 /**

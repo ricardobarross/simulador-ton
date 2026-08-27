@@ -1,5 +1,168 @@
+import { SupabaseClient } from '@supabase/supabase-js'
 import { createClient } from '@/lib/supabase'
 import { registrarPagamentoOrdem } from '@/lib/financeiro'
+import { formatarMoeda } from '@/lib/utils'
+
+// ═══════════════════════════════════════════════════════════
+// Pendências financeiras (contas a pagar + fiado vencido) — usado tanto no
+// resumo automático de abertura do chat quanto na ferramenta
+// consultar_pendencias (pra quando a pessoa pergunta de novo no meio da
+// conversa). Uma única fonte de verdade pros dois lugares.
+// ═══════════════════════════════════════════════════════════
+
+interface ItemPendente {
+  id: string
+  descricao: string
+  valor: number
+  /** Negativo = já venceu há X dias. Zero = vence hoje. Positivo = faltam X dias. */
+  dias: number
+}
+
+interface ClienteVencido {
+  cliente_nome: string
+  valor: number
+  /** Dias de atraso (sempre positivo). */
+  dias: number
+}
+
+export interface Pendencias {
+  contasFixasPendentes: ItemPendente[]
+  contasVariaveisPendentes: ItemPendente[]
+  clientesVencidos: ClienteVencido[]
+  totalAPagarPendente: number
+  totalAPagarVencido: number
+  totalAReceberAberto: number
+  totalAReceberVencido: number
+}
+
+function parseDataISO(data: string): Date {
+  const [ano, mes, dia] = data.split('-').map(Number)
+  return new Date(ano, mes - 1, dia)
+}
+
+function dataZerada(d: Date): Date {
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate())
+}
+
+/** Diferença em dias inteiros de `a` até `b` (b - a). Positivo = b é depois de a. */
+function diasEntre(a: Date, b: Date): number {
+  const MS_DIA = 86400000
+  return Math.round((dataZerada(b).getTime() - dataZerada(a).getTime()) / MS_DIA)
+}
+
+/** Próxima data de vencimento de uma conta fixa dentro do mês atual (clampada ao último dia, ex.: dia 31 em fevereiro). */
+function proximoVencimentoFixa(diaVencimento: number, hoje: Date): Date {
+  const ultimoDiaMes = new Date(hoje.getFullYear(), hoje.getMonth() + 1, 0).getDate()
+  return new Date(hoje.getFullYear(), hoje.getMonth(), Math.min(diaVencimento, ultimoDiaMes))
+}
+
+export async function buscarPendencias(supabase: SupabaseClient): Promise<Pendencias> {
+  const hoje = new Date()
+  const inicioMes = `${hoje.getFullYear()}-${String(hoje.getMonth() + 1).padStart(2, '0')}-01`
+  const fimMesData = new Date(hoje.getFullYear(), hoje.getMonth() + 1, 0)
+  const fimMes = `${fimMesData.getFullYear()}-${String(fimMesData.getMonth() + 1).padStart(2, '0')}-${String(fimMesData.getDate()).padStart(2, '0')}`
+
+  const [fixasRes, lancsFixasRes, variaveisRes, fiadosRes] = await Promise.all([
+    supabase.from('contas_fixas').select('id, descricao, valor, dia_vencimento').eq('ativo', true),
+    supabase.from('lancamentos').select('conta_fixa_id').eq('status', 'pago').is('deleted_at', null).not('conta_fixa_id', 'is', null).gte('data', inicioMes).lte('data', fimMes),
+    supabase.from('contas_variaveis').select('id, descricao, valor, data_vencimento').eq('status', 'pendente'),
+    supabase.from('fiados').select('valor_total, data_vencimento, cliente:clientes(nome), pagamentos:fiado_pagamentos(valor)').is('deleted_at', null).neq('status', 'quitado'),
+  ])
+
+  const pagasIds = new Set((lancsFixasRes.data ?? []).map((l: { conta_fixa_id: string }) => l.conta_fixa_id))
+  const contasFixasPendentes: ItemPendente[] = (fixasRes.data ?? [])
+    .filter((f: { id: string }) => !pagasIds.has(f.id))
+    .map((f: { id: string; descricao: string; valor: number; dia_vencimento: number }) => ({
+      id: f.id,
+      descricao: f.descricao,
+      valor: f.valor,
+      dias: diasEntre(hoje, proximoVencimentoFixa(f.dia_vencimento, hoje)),
+    }))
+    .sort((a: ItemPendente, b: ItemPendente) => a.dias - b.dias)
+
+  const contasVariaveisPendentes: ItemPendente[] = (variaveisRes.data ?? [])
+    .map((v: { id: string; descricao: string; valor: number; data_vencimento: string }) => ({
+      id: v.id,
+      descricao: v.descricao,
+      valor: v.valor,
+      dias: diasEntre(hoje, parseDataISO(v.data_vencimento)),
+    }))
+    .sort((a: ItemPendente, b: ItemPendente) => a.dias - b.dias)
+
+  type FiadoLinha = {
+    valor_total: number
+    data_vencimento: string | null
+    cliente: { nome: string } | { nome: string }[] | null
+    pagamentos: { valor: number }[] | null
+  }
+  const abertos = ((fiadosRes.data ?? []) as FiadoLinha[]).map(f => {
+    const pago = (f.pagamentos ?? []).reduce((s, p) => s + p.valor, 0)
+    const saldo = Math.max(0, f.valor_total - pago)
+    const cliente = Array.isArray(f.cliente) ? f.cliente[0] : f.cliente
+    return { cliente_nome: cliente?.nome ?? 'Cliente', saldo, data_vencimento: f.data_vencimento }
+  }).filter(f => f.saldo > 0.005)
+
+  const totalAReceberAberto = abertos.reduce((s, f) => s + f.saldo, 0)
+
+  const porCliente = new Map<string, { valor: number; diasMax: number }>()
+  abertos
+    .filter(f => f.data_vencimento && parseDataISO(f.data_vencimento) < dataZerada(hoje))
+    .forEach(f => {
+      const dias = diasEntre(parseDataISO(f.data_vencimento as string), hoje)
+      const atual = porCliente.get(f.cliente_nome) ?? { valor: 0, diasMax: 0 }
+      porCliente.set(f.cliente_nome, { valor: atual.valor + f.saldo, diasMax: Math.max(atual.diasMax, dias) })
+    })
+  const clientesVencidos: ClienteVencido[] = Array.from(porCliente.entries())
+    .map(([cliente_nome, v]) => ({ cliente_nome, valor: v.valor, dias: v.diasMax }))
+    .sort((a, b) => b.dias - a.dias)
+  const totalAReceberVencido = clientesVencidos.reduce((s, c) => s + c.valor, 0)
+
+  const todasContas = [...contasFixasPendentes, ...contasVariaveisPendentes]
+  const totalAPagarPendente = todasContas.reduce((s, c) => s + c.valor, 0)
+  const totalAPagarVencido = todasContas.filter(c => c.dias < 0).reduce((s, c) => s + c.valor, 0)
+
+  return { contasFixasPendentes, contasVariaveisPendentes, clientesVencidos, totalAPagarPendente, totalAPagarVencido, totalAReceberAberto, totalAReceberVencido }
+}
+
+/**
+ * Monta o texto do resumo automático mostrado assim que a secretária é aberta
+ * — não passa pela IA (é montado direto com os dados reais), justamente pra
+ * garantir que os valores e prazos nunca saiam errados ou inventados.
+ */
+export function formatarBriefingInicial(p: Pendencias): string {
+  const todasContas = [...p.contasFixasPendentes, ...p.contasVariaveisPendentes].sort((a, b) => a.dias - b.dias)
+  const vencidas = todasContas.filter(c => c.dias < 0)
+  const aVencer = todasContas.filter(c => c.dias >= 0)
+
+  const blocoContas: string[] = []
+  if (vencidas.length === 0 && aVencer.length === 0) {
+    blocoContas.push('Contas a pagar: nada pendente no momento.')
+  } else {
+    const linhas: string[] = []
+    if (vencidas.length > 0) {
+      linhas.push(`${vencidas.length} conta(s) já vencida(s) (${formatarMoeda(vencidas.reduce((s, c) => s + c.valor, 0))}):`)
+      vencidas.forEach(c => linhas.push(`  • ${c.descricao} — ${formatarMoeda(c.valor)}, venceu há ${Math.abs(c.dias)} dia${Math.abs(c.dias) === 1 ? '' : 's'}`))
+    }
+    if (aVencer.length > 0) {
+      linhas.push(`${vencidas.length > 0 ? 'Ainda faltam pagar' : 'Faltam pagar'}:`)
+      aVencer.slice(0, 5).forEach(c => linhas.push(`  • ${c.descricao} — ${formatarMoeda(c.valor)}, ${c.dias === 0 ? 'vence hoje' : `faltam ${c.dias} dia${c.dias === 1 ? '' : 's'}`}`))
+      if (aVencer.length > 5) linhas.push(`  ...e mais ${aVencer.length - 5}.`)
+    }
+    blocoContas.push(`Contas a pagar:\n${linhas.join('\n')}`)
+  }
+
+  const blocoFiado: string[] = []
+  if (p.clientesVencidos.length === 0) {
+    blocoFiado.push('Fiado: ninguém com pagamento atrasado.')
+  } else {
+    const linhas = [`${p.clientesVencidos.length} cliente(s) com fiado vencido (${formatarMoeda(p.totalAReceberVencido)} no total):`]
+    p.clientesVencidos.slice(0, 5).forEach(c => linhas.push(`  • ${c.cliente_nome} — ${formatarMoeda(c.valor)}, atrasado há ${c.dias} dia${c.dias === 1 ? '' : 's'}`))
+    if (p.clientesVencidos.length > 5) linhas.push(`  ...e mais ${p.clientesVencidos.length - 5}.`)
+    blocoFiado.push(`Fiado vencido:\n${linhas.join('\n')}`)
+  }
+
+  return [...blocoContas, ...blocoFiado].join('\n\n')
+}
 
 // ═══════════════════════════════════════════════════════════
 // Ferramentas da secretária IA — schema (formato OpenAI/Groq function-calling)
@@ -216,6 +379,22 @@ export const ferramentasSecretaria = [
         properties: { ordem_id: { type: 'string' } },
         required: ['ordem_id'],
       },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'consultar_pendencias',
+      description: 'Consulta de novo, em tempo real, as contas a pagar pendentes (fixas e variáveis, com quantos dias faltam ou já venceram) e os clientes com fiado vencido. Use quando a pessoa perguntar algo como "o que falta pagar essa semana", "tem conta vencendo?", "quem tá devendo atrasado" — mesmo que você já tenha mostrado esse resumo na abertura da conversa, ele pode ter mudado.',
+      parameters: { type: 'object', properties: {} },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'analisar_saude_financeira',
+      description: 'Traz os números pra você analisar a saúde financeira da oficina: DRE do mês atual e do mês anterior (receita, custos variáveis, custos fixos, margem de contribuição, lucro líquido, margem de lucro %), quanto tem a receber de clientes (total e o que já venceu) e quanto tem a pagar (total e o que já venceu). Use quando pedirem uma "análise financeira", "como tá a saúde da empresa", "como estamos de dinheiro" ou conselhos pra melhorar o resultado. Você interpreta os números e dá 2-3 sugestões práticas e específicas — nunca invente ou arredonde valor que não veio da ferramenta.',
+      parameters: { type: 'object', properties: {} },
     },
   },
   {
@@ -497,6 +676,44 @@ export async function executarFerramenta(nome: string, args: Record<string, unkn
         cliente_nome: cliente?.nome,
         mensagem_sugerida: mensagem,
         link_whatsapp: telefoneWa ? `https://wa.me/${telefoneWa}?text=${encodeURIComponent(mensagem)}` : null,
+      }
+    }
+
+    case 'consultar_pendencias': {
+      const pendencias = await buscarPendencias(supabase)
+      return {
+        contas_fixas_pendentes: pendencias.contasFixasPendentes,
+        contas_variaveis_pendentes: pendencias.contasVariaveisPendentes,
+        clientes_com_fiado_vencido: pendencias.clientesVencidos,
+        total_a_pagar_pendente: pendencias.totalAPagarPendente,
+        total_a_pagar_vencido: pendencias.totalAPagarVencido,
+        total_a_receber_aberto: pendencias.totalAReceberAberto,
+        total_a_receber_vencido: pendencias.totalAReceberVencido,
+        aviso: 'Campo "dias": negativo significa que já venceu há esse tanto de dias; positivo é quanto falta.',
+      }
+    }
+
+    case 'analisar_saude_financeira': {
+      const hoje = new Date()
+      const mesAtualISO = `${hoje.getFullYear()}-${String(hoje.getMonth() + 1).padStart(2, '0')}-01`
+      const mesAnteriorData = new Date(hoje.getFullYear(), hoje.getMonth() - 1, 1)
+      const mesAnteriorISO = `${mesAnteriorData.getFullYear()}-${String(mesAnteriorData.getMonth() + 1).padStart(2, '0')}-01`
+
+      const [dreAtualRes, dreAnteriorRes, pendencias] = await Promise.all([
+        supabase.rpc('calcular_dre_mensal', { p_mes: mesAtualISO }).single(),
+        supabase.rpc('calcular_dre_mensal', { p_mes: mesAnteriorISO }).single(),
+        buscarPendencias(supabase),
+      ])
+      if (dreAtualRes.error) return { erro: dreAtualRes.error.message }
+
+      return {
+        dre_mes_atual: dreAtualRes.data,
+        dre_mes_anterior: dreAnteriorRes.error ? null : dreAnteriorRes.data,
+        contas_a_pagar_pendente: pendencias.totalAPagarPendente,
+        contas_a_pagar_vencido: pendencias.totalAPagarVencido,
+        a_receber_aberto: pendencias.totalAReceberAberto,
+        a_receber_vencido: pendencias.totalAReceberVencido,
+        aviso: 'Todo número acima veio direto do banco de dados — use exatamente esses valores na análise, nunca invente, arredonde de cabeça ou complete com estimativa.',
       }
     }
 
