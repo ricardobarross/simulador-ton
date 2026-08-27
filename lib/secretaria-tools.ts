@@ -385,7 +385,7 @@ export const ferramentasSecretaria = [
     type: 'function',
     function: {
       name: 'consultar_pendencias',
-      description: 'Consulta de novo, em tempo real, as contas a pagar pendentes (fixas e variáveis, com quantos dias faltam ou já venceram) e os clientes com fiado vencido. Use quando a pessoa perguntar algo como "o que falta pagar essa semana", "tem conta vencendo?", "quem tá devendo atrasado" — mesmo que você já tenha mostrado esse resumo na abertura da conversa, ele pode ter mudado.',
+      description: 'Reconsulta contas a pagar pendentes (dias até vencer/vencidas) e clientes com fiado vencido. Use se perguntarem de novo depois da abertura, tipo "o que falta pagar essa semana" ou "tem fiado atrasado".',
       parameters: { type: 'object', properties: {} },
     },
   },
@@ -393,7 +393,7 @@ export const ferramentasSecretaria = [
     type: 'function',
     function: {
       name: 'analisar_saude_financeira',
-      description: 'Traz os números pra você analisar a saúde financeira da oficina: DRE do mês atual e do mês anterior (receita, custos variáveis, custos fixos, margem de contribuição, lucro líquido, margem de lucro %), quanto tem a receber de clientes (total e o que já venceu) e quanto tem a pagar (total e o que já venceu). Use quando pedirem uma "análise financeira", "como tá a saúde da empresa", "como estamos de dinheiro" ou conselhos pra melhorar o resultado. Você interpreta os números e dá 2-3 sugestões práticas e específicas — nunca invente ou arredonde valor que não veio da ferramenta.',
+      description: 'Traz o DRE (mês atual e anterior) mais contas a pagar/receber (total e vencido) pra você analisar a saúde financeira e dar conselhos. Use em pedidos de "análise financeira" ou "como tá a saúde da empresa". Só use os números que vierem daqui, nunca invente.',
       parameters: { type: 'object', properties: {} },
     },
   },

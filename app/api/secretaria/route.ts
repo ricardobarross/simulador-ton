@@ -43,8 +43,39 @@ Ser natural não é desculpa pra arriscar dado errado — dinheiro e nome de cli
 - Cliente veio buscar e pagou: aí sim você pergunta como ele pagou (Dinheiro, Pix, Débito, Crédito, Transferência ou Fiado) e usa registrar_pagamento_os. Pagou dividido (metade dinheiro, metade pix)? Pega o valor de cada parte e usa "pagamentos" em vez de "forma_pagamento". Repare que às vezes o combinado muda na hora (ia pagar dinheiro, decidiu pagar no cartão) — sem problema, é só perguntar como foi de verdade e registrar assim. Se for pagamento em cheque, você não consegue registrar pelo chat (faltam os dados do cheque) — oriente a pessoa a usar o botão "Registar pagamento" na tela de Ordens de Serviço.
 - Marcar O.S. como pronta (marcar_ordem_pronta) só muda o status pra "pronto pra retirada" e gera a mensagem de aviso — isso é independente do pagamento, não confunda os dois.
 - Fechar o caixa ("quero fechar o caixa", "bater o caixa hoje"): puxe uma conversa curta, não um formulário. Pergunta o valor de abertura (o troco inicial) e quanto foi contado na gaveta agora — só isso, a ferramenta fechar_caixa já soma sozinha todas as entradas e saídas em dinheiro (Pix/cartão/transferência ficam de fora, isso é conta de banco, não de gaveta). Depois de chamar, conte o resultado com naturalidade: bateu, sobrou ou faltou, e quanto. Fiado pendente não entra nessa conta (ainda não é dinheiro na gaveta) — vale avisar se tiver.
-- Logo que a conversa abre, ${primeiroNome} já recebe (fora do seu turno, antes da primeira mensagem) um resumo automático das contas a pagar (vencidas e a vencer) e dos clientes com fiado vencido — isso está no histórico como se você já tivesse dito. Não repita esse resumo de novo à toa. Se pedirem pra conferir de novo mais tarde na mesma conversa ("o que falta pagar essa semana", "tem fiado atrasado?"), use consultar_pendencias — os números podem ter mudado desde a abertura.
-- Pediram uma "análise financeira", "como tá a saúde da empresa", "como estamos de dinheiro" ou conselho pra melhorar o resultado: use analisar_saude_financeira. Ela devolve o DRE do mês atual e do anterior (receita, custos variáveis, custos fixos, margem de contribuição, lucro líquido, margem de lucro %), quanto tem a receber (e quanto já venceu) e quanto tem a pagar (e quanto já venceu). Compare o mês atual com o anterior, aponte o que está pesando de verdade (custo fixo alto demais pra receita, margem caindo, muito dinheiro parado em fiado vencido, etc.) e feche com 2-3 sugestões práticas e específicas — nunca um "corte custos" genérico, diga qual custo e por quê. Isso pode ser um pouco mais longo que sua resposta normal (é uma análise, não um bate-papo rápido), mas continua direto, sem enrolação, e só com números que a ferramenta te deu — nunca invente ou arredonde de cabeça.`
+- A abertura da conversa já mostrou pra ${primeiroNome} um resumo de contas a pagar e fiado vencido (está no histórico como se você já tivesse dito) — não repita à toa. Se pedirem de novo depois ("o que falta pagar essa semana?"), use consultar_pendencias.
+- Pedido de "análise financeira" ou "como tá a saúde da empresa": use analisar_saude_financeira (DRE atual x mês anterior, a pagar/receber e o que venceu). Compare os dois meses, aponte o que pesa de verdade e feche com 2-3 sugestões específicas (não genéricas). Pode ser um pouco mais longo que o normal, mas só com os números que vieram da ferramenta.`
+}
+
+/**
+ * Limita quantas mensagens antigas voltam pra Groq a cada chamada — sem isso,
+ * uma conversa longa (o widget fica aberto na página, então o histórico só
+ * cresce) reenviaria tudo desde o início toda vez, e isso soma rápido no
+ * limite de tokens por minuto do plano gratuito. Nunca corta bem antes de uma
+ * mensagem 'tool' órfã (sem a mensagem do assistente com tool_calls
+ * correspondente antes dela) — a Groq rejeita isso.
+ */
+function truncarHistorico(mensagens: ChatMessage[], maximo = 20): ChatMessage[] {
+  let corte = Math.max(0, mensagens.length - maximo)
+  while (corte < mensagens.length && mensagens[corte].role === 'tool') corte++
+  return mensagens.slice(corte)
+}
+
+/** Troca o erro cru da Groq por algo que dá pra mostrar direto pra pessoa no chat. */
+function mensagemErroGroq(textoResposta: string): string {
+  try {
+    const json = JSON.parse(textoResposta)
+    const erro = json?.error
+    if (erro?.code === 'rate_limit_exceeded') {
+      const espera = Math.ceil(Number(/try again in ([\d.]+)s/.exec(erro.message ?? '')?.[1] ?? 30))
+      return `Muita coisa acontecendo ao mesmo tempo com a IA (limite de uso da Groq) — espera uns ${espera} segundos e manda de novo.`
+    }
+    if (erro?.code === 'model_not_found') {
+      return 'O modelo de IA configurado não existe mais na Groq. Avise o proprietário pra atualizar em Configurações → Integrações.'
+    }
+    if (erro?.message) return `Erro da Groq: ${erro.message}`
+  } catch { /* resposta não era JSON — cai pro texto cru abaixo */ }
+  return `Erro da Groq: ${textoResposta}`
 }
 
 export async function POST(req: NextRequest) {
@@ -90,7 +121,7 @@ export async function POST(req: NextRequest) {
       },
       body: JSON.stringify({
         model: groqModel,
-        messages: [systemMessage, ...messages],
+        messages: [systemMessage, ...truncarHistorico(messages)],
         tools: ferramentasSecretaria,
         tool_choice: 'auto',
         temperature: 0.3,
@@ -99,7 +130,8 @@ export async function POST(req: NextRequest) {
 
     if (!resposta.ok) {
       const texto = await resposta.text()
-      return NextResponse.json({ erro: `Erro da Groq: ${texto}` }, { status: 502 })
+      const status = resposta.status === 429 ? 429 : 502
+      return NextResponse.json({ erro: mensagemErroGroq(texto) }, { status })
     }
 
     const dados = await resposta.json()
