@@ -13,7 +13,7 @@ const todosItens = [
   { label: 'Orçamentos',         href: '/orcamentos',      soProprietario: false },
   { label: 'Ordens de Serviço',  href: '/ordens',          soProprietario: false },
   { label: 'Financeiro',         href: '/financeiro',      soProprietario: false },
-  { label: 'Relatórios',         href: '/relatorios',      soProprietario: false },
+  { label: 'Relatórios',         href: '/relatorios',      soProprietario: true  },
   { label: 'Fornecedores',       href: '/fornecedores',    soProprietario: false },
   { label: 'Transportadoras',    href: '/transportadoras', soProprietario: false },
   { label: 'Contas a pagar',     href: '/contas',          soProprietario: false },

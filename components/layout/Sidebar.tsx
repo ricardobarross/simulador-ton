@@ -9,6 +9,7 @@ const navegacao = [
   {
     label: 'Dashboard',
     href: '/',
+    soProprietario: false,
     icon: (
       <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
@@ -19,6 +20,7 @@ const navegacao = [
   {
     label: 'Clientes',
     href: '/clientes',
+    soProprietario: false,
     icon: (
       <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
@@ -29,6 +31,7 @@ const navegacao = [
   {
     label: 'Serviços',
     href: '/servicos',
+    soProprietario: false,
     icon: (
       <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
@@ -40,6 +43,7 @@ const navegacao = [
   {
     label: 'Orçamentos',
     href: '/orcamentos',
+    soProprietario: false,
     icon: (
       <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
@@ -50,6 +54,7 @@ const navegacao = [
   {
     label: 'Ordens de Serviço',
     href: '/ordens',
+    soProprietario: false,
     icon: (
       <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
@@ -60,6 +65,7 @@ const navegacao = [
   {
     label: 'Financeiro',
     href: '/financeiro',
+    soProprietario: false,
     icon: (
       <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
@@ -70,6 +76,7 @@ const navegacao = [
   {
     label: 'Relatórios',
     href: '/relatorios',
+    soProprietario: true,
     icon: (
       <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
@@ -157,6 +164,7 @@ export function Sidebar() {
   const ativo = (href: string) =>
     href === '/' ? pathname === '/' : pathname.startsWith(href)
 
+  const itensPrincipais = navegacao.filter(item => !item.soProprietario || ehProprietario)
   const itensSecundarios = navegacaoSecundaria.filter(item => !item.soProprietario || ehProprietario)
 
   return (
@@ -172,7 +180,7 @@ export function Sidebar() {
 
       {/* Navegação principal */}
       <nav className="flex-1 px-3 py-4 space-y-1">
-        {navegacao.map((item) => (
+        {itensPrincipais.map((item) => (
           <Link
             key={item.href}
             href={item.href}

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase'
+import { useAuth } from '@/lib/auth-context'
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card'
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner'
 import { DRE, DadosDRE } from '@/components/relatorios/DRE'
@@ -43,6 +44,7 @@ function paraDevedores(linhas: Record<string, unknown>[]): ItemDevedor[] {
 }
 
 export default function RelatoriosPage() {
+  const { ehProprietario } = useAuth()
   const { mostrarErro } = useToast()
   const [mesSelecionado, setMesSelecionado] = useState(mesAtualISO())
   const [dre, setDre] = useState<DadosDRE | null>(null)
@@ -51,6 +53,7 @@ export default function RelatoriosPage() {
   const [carregando, setCarregando] = useState(true)
 
   useEffect(() => {
+    if (!ehProprietario) { setCarregando(false); return }
     async function carregar() {
       setCarregando(true)
       const supabase = createClient()
@@ -69,7 +72,20 @@ export default function RelatoriosPage() {
       setCarregando(false)
     }
     carregar()
-  }, [mesSelecionado]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [mesSelecionado, ehProprietario]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  if (!ehProprietario) {
+    return (
+      <div className="space-y-6">
+        <div>
+          <h2 className="text-xl font-semibold text-gray-900">Relatórios</h2>
+        </div>
+        <Card>
+          <p className="text-sm text-gray-500 text-center py-8">Esta página é restrita ao proprietário.</p>
+        </Card>
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-6">

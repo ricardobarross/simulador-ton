@@ -3,12 +3,14 @@
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase'
+import { useAuth } from '@/lib/auth-context'
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card'
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner'
 import { formatarMoeda } from '@/lib/utils'
 import { ResumoGeral } from '@/types'
 
 export default function DashboardPage() {
+  const { ehProprietario } = useAuth()
   const [resumo, setResumo] = useState<ResumoGeral | null>(null)
   const [carregando, setCarregando] = useState(true)
 
@@ -18,11 +20,16 @@ export default function DashboardPage() {
 
       const inicioMes = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0, 10)
 
+      // Receita/despesa/resultado do mês é acumulado do mês inteiro — só o
+      // proprietário vê. Funcionário só busca os contadores (clientes,
+      // orçamentos, ordens), nunca essa query de lançamentos do mês.
       const [clientes, orcamentos, ordens, lancamentos] = await Promise.all([
         supabase.from('clientes').select('id', { count: 'exact' }).eq('ativo', true).is('deleted_at', null),
         supabase.from('orcamentos').select('id', { count: 'exact' }).in('status', ['rascunho', 'enviado']),
         supabase.from('ordens_servico').select('id', { count: 'exact' }).in('status', ['aberta', 'em_andamento']).is('deleted_at', null),
-        supabase.from('lancamentos').select('tipo, valor').eq('status', 'pago').gte('data', inicioMes).is('deleted_at', null),
+        ehProprietario
+          ? supabase.from('lancamentos').select('tipo, valor').eq('status', 'pago').gte('data', inicioMes).is('deleted_at', null)
+          : Promise.resolve({ data: null }),
       ])
 
       const receitas = lancamentos.data?.filter(l => l.tipo === 'entrada').reduce((s, l) => s + l.valor, 0) ?? 0
@@ -39,7 +46,7 @@ export default function DashboardPage() {
       setCarregando(false)
     }
     carregar()
-  }, [])
+  }, [ehProprietario])
 
   if (carregando) return <LoadingSpinner texto="A carregar dashboard..." />
 
@@ -83,7 +90,7 @@ export default function DashboardPage() {
         </svg>
       ),
     },
-    {
+    ...(ehProprietario ? [{
       label: 'Resultado do mês',
       valor: resumo?.resultado_mes ?? 0,
       tipo: 'moeda',
@@ -95,7 +102,7 @@ export default function DashboardPage() {
             d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
         </svg>
       ),
-    },
+    }] : []),
   ]
 
   const coresBg: Record<string, string> = {
@@ -129,29 +136,31 @@ export default function DashboardPage() {
         ))}
       </div>
 
-      {/* Receita vs Despesa do mês */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <Link href="/financeiro">
-          <Card className="hover:shadow-sm hover:border-gray-300 transition-shadow cursor-pointer">
-            <CardHeader>
-              <CardTitle>Receitas do mês</CardTitle>
-            </CardHeader>
-            <p className="text-3xl font-bold text-green-600">
-              {formatarMoeda(resumo?.receita_mes ?? 0)}
-            </p>
-          </Card>
-        </Link>
-        <Link href="/financeiro">
-          <Card className="hover:shadow-sm hover:border-gray-300 transition-shadow cursor-pointer">
-            <CardHeader>
-              <CardTitle>Despesas do mês</CardTitle>
-            </CardHeader>
-            <p className="text-3xl font-bold text-red-500">
-              {formatarMoeda(resumo?.despesa_mes ?? 0)}
-            </p>
-          </Card>
-        </Link>
-      </div>
+      {/* Receita vs Despesa do mês — acumulado do mês inteiro, só o proprietário vê */}
+      {ehProprietario && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <Link href="/financeiro">
+            <Card className="hover:shadow-sm hover:border-gray-300 transition-shadow cursor-pointer">
+              <CardHeader>
+                <CardTitle>Receitas do mês</CardTitle>
+              </CardHeader>
+              <p className="text-3xl font-bold text-green-600">
+                {formatarMoeda(resumo?.receita_mes ?? 0)}
+              </p>
+            </Card>
+          </Link>
+          <Link href="/financeiro">
+            <Card className="hover:shadow-sm hover:border-gray-300 transition-shadow cursor-pointer">
+              <CardHeader>
+                <CardTitle>Despesas do mês</CardTitle>
+              </CardHeader>
+              <p className="text-3xl font-bold text-red-500">
+                {formatarMoeda(resumo?.despesa_mes ?? 0)}
+              </p>
+            </Card>
+          </Link>
+        </div>
+      )}
 
       {/* Atalhos rápidos */}
       <Card>
