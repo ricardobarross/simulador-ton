@@ -13,6 +13,8 @@ import { ContaFixa, ContaVariavel, StatusConta, Fornecedor } from '@/types'
 import { formatarMoeda, formatarData, statusLancamento } from '@/lib/utils'
 import { executarOperacao } from '@/lib/api-helpers'
 import { useToast } from '@/lib/toast-context'
+import { pagarConta } from '@/lib/contas'
+import { PagarContaForm } from '@/components/cadastros/PagarContaForm'
 
 // ─── Contas fixas ─────────────────────────────────────────────
 function ContaFixaForm({
@@ -135,21 +137,47 @@ export default function ContasPage() {
   const [editandoVariavel, setEditandoVariavel] = useState<ContaVariavel | undefined>()
   const [busca, setBusca] = useState('')
   const [filtroStatus, setFiltroStatus] = useState<StatusConta | 'todos'>('todos')
+  const [fixasPagasEsteMes, setFixasPagasEsteMes] = useState<Set<string>>(new Set())
+  const [pagando, setPagando] = useState<{ tipo: 'fixa' | 'variavel'; id: string; descricao: string; valor: number; dataSugerida: string } | null>(null)
 
   async function carregar() {
     setCarregando(true)
     const supabase = createClient()
-    const [fixasRes, variaveisRes, fornecedoresRes] = await Promise.all([
+    const hoje = new Date()
+    const inicioMes = `${hoje.getFullYear()}-${String(hoje.getMonth() + 1).padStart(2, '0')}-01`
+    const [fixasRes, variaveisRes, fornecedoresRes, lancsFixasRes] = await Promise.all([
       executarOperacao(() => supabase.from('contas_fixas').select('*').order('dia_vencimento')),
       executarOperacao(() => supabase.from('contas_variaveis').select('*, fornecedor:fornecedores(*)').order('data_vencimento')),
       executarOperacao(() => supabase.from('fornecedores').select('*').eq('ativo', true).order('nome')),
+      executarOperacao(() => supabase.from('lancamentos').select('conta_fixa_id').eq('status', 'pago').is('deleted_at', null).not('conta_fixa_id', 'is', null).gte('data', inicioMes)),
     ])
     if (!fixasRes.ok) mostrarErro(`Não foi possível carregar as contas fixas: ${fixasRes.erro}`)
     if (!variaveisRes.ok) mostrarErro(`Não foi possível carregar as contas variáveis: ${variaveisRes.erro}`)
     setFixas(fixasRes.ok ? (fixasRes.data as ContaFixa[]) : [])
     setVariaveis(variaveisRes.ok ? (variaveisRes.data as ContaVariavel[]) : [])
     setFornecedores(fornecedoresRes.ok ? (fornecedoresRes.data as Fornecedor[]) : [])
+    setFixasPagasEsteMes(new Set(lancsFixasRes.ok ? (lancsFixasRes.data as { conta_fixa_id: string }[]).map(l => l.conta_fixa_id) : []))
     setCarregando(false)
+  }
+
+  async function confirmarPagamento(dados: { valor: number; formaPagamento: string; data: string; observacoes: string | null }) {
+    if (!pagando) return
+    const supabase = createClient()
+    const resultado = await pagarConta(supabase, {
+      tipo: pagando.tipo,
+      contaId: pagando.id,
+      valor: dados.valor,
+      formaPagamento: dados.formaPagamento,
+      data: dados.data,
+      observacoes: dados.observacoes,
+    })
+    if (!resultado.ok) {
+      mostrarErro(`Não foi possível registar o pagamento: ${resultado.erro}`)
+      return // modal continua aberto — nada foi salvo
+    }
+    mostrarSucesso('Pagamento registado — já entrou em Lançamentos.')
+    setPagando(null)
+    await carregar()
   }
 
   useEffect(() => { carregar() }, []) // eslint-disable-line react-hooks/exhaustive-deps
@@ -274,9 +302,24 @@ export default function ContasPage() {
                     <Td>{c.categoria ?? '—'}</Td>
                     <Td>Dia {c.dia_vencimento}</Td>
                     <Td className="text-right">{formatarMoeda(c.valor)}</Td>
-                    <Td><Badge cor={c.ativo ? 'green' : 'gray'}>{c.ativo ? 'Ativa' : 'Inativa'}</Badge></Td>
+                    <Td>
+                      {fixasPagasEsteMes.has(c.id) ? (
+                        <Badge cor="green">Pago este mês</Badge>
+                      ) : (
+                        <Badge cor={c.ativo ? 'yellow' : 'gray'}>{c.ativo ? 'A pagar' : 'Inativa'}</Badge>
+                      )}
+                    </Td>
                     <Td className="text-right">
                       <div className="flex items-center justify-end gap-2">
+                        {c.ativo && !fixasPagasEsteMes.has(c.id) && (
+                          <Button
+                            variante="primario"
+                            tamanho="sm"
+                            onClick={() => setPagando({ tipo: 'fixa', id: c.id, descricao: c.descricao, valor: c.valor, dataSugerida: new Date().toISOString().slice(0, 10) })}
+                          >
+                            Pagar
+                          </Button>
+                        )}
                         <Button variante="ghost" tamanho="sm" onClick={() => { setEditandoFixa(c); setModalAberto(true) }}>Editar</Button>
                         <Button variante="perigo" tamanho="sm" onClick={() => excluirFixa(c.id)}>Excluir</Button>
                       </div>
@@ -313,6 +356,15 @@ export default function ContasPage() {
                     <Td><Badge cor={statusLancamento[c.status].cor as 'gray' | 'blue' | 'green' | 'yellow' | 'orange' | 'red'}>{statusLancamento[c.status].label}</Badge></Td>
                     <Td className="text-right">
                       <div className="flex items-center justify-end gap-2">
+                        {c.status === 'pendente' && (
+                          <Button
+                            variante="primario"
+                            tamanho="sm"
+                            onClick={() => setPagando({ tipo: 'variavel', id: c.id, descricao: c.descricao, valor: c.valor, dataSugerida: c.data_vencimento })}
+                          >
+                            Pagar
+                          </Button>
+                        )}
                         <Button variante="ghost" tamanho="sm" onClick={() => { setEditandoVariavel(c); setModalAberto(true) }}>Editar</Button>
                         <Button variante="perigo" tamanho="sm" onClick={() => excluirVariavel(c.id)}>Excluir</Button>
                       </div>
@@ -334,6 +386,22 @@ export default function ContasPage() {
           <ContaFixaForm inicial={editandoFixa} onGuardar={guardarFixa} onCancelar={() => setModalAberto(false)} />
         ) : (
           <ContaVariavelForm inicial={editandoVariavel} fornecedores={fornecedores} onGuardar={guardarVariavel} onCancelar={() => setModalAberto(false)} />
+        )}
+      </Modal>
+
+      <Modal
+        aberto={!!pagando}
+        onFechar={() => setPagando(null)}
+        titulo="Registar pagamento"
+      >
+        {pagando && (
+          <PagarContaForm
+            descricao={pagando.descricao}
+            valorReferencia={pagando.valor}
+            dataSugerida={pagando.dataSugerida}
+            onConfirmar={confirmarPagamento}
+            onCancelar={() => setPagando(null)}
+          />
         )}
       </Modal>
     </div>
